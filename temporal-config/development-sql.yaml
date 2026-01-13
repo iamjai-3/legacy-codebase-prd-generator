@@ -1,0 +1,17 @@
+# Temporal dynamic config for development
+system.enableActivityEagerExecution:
+  - value: true
+    constraints: {}
+
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+
+frontend.keepAliveMaxConnectionAge:
+  - value: "5m"
+    constraints: {}
+
+history.maximumSignalRPCSize:
+  - value: 4194304
+    constraints: {}
+
