@@ -19,7 +19,7 @@ from src.utils.logging_config import ExecutionTimer
 @dataclass
 class PRDSection:
     """A section of the PRD document."""
-
+    
     title: str
     content: str
     order: int
@@ -29,7 +29,7 @@ class PRDSection:
 @dataclass
 class PRDDocument:
     """Complete PRD document."""
-
+    
     form_name: str
     title: str
     version: str
@@ -44,7 +44,7 @@ class PRDDocument:
 @dataclass
 class PRDAggregatorResult:
     """Result from PRD aggregation."""
-
+    
     form_name: str
     prd_document: PRDDocument
     markdown_content: str
@@ -58,15 +58,15 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
     Agent for aggregating all analysis results into a comprehensive PRD document.
     Combines outputs from all specialized agents into a cohesive document.
     """
-
+    
     def __init__(self) -> None:
         """Initialize the PRD aggregator agent."""
         super().__init__("PRDAggregatorAgent")
-
+    
     def get_system_prompt(self, context: AgentContext) -> str:
         """Get the system prompt for PRD aggregation."""
         return PRDAggregatorPrompts.system_prompt(context.form_name)
-
+    
     async def analyze(
         self,
         context: AgentContext,
@@ -79,7 +79,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
     ) -> AgentResult[PRDAggregatorResult]:
         """
         Aggregate all agent results into a PRD document.
-
+        
         Args:
             context: Agent execution context
             screenshot_analysis: Results from screenshot analysis
@@ -87,7 +87,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             requirements_analysis: Results from requirements generation
             user_flow_analysis: Results from user flow analysis
             risk_analysis: Results from risk analysis
-
+            
         Returns:
             AgentResult with PRDAggregatorResult
         """
@@ -111,7 +111,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 user_flow_analysis,
                 risk_analysis,
             )
-
+            
             # Generate executive summary and appendices
             executive_summary = await self._generate_executive_summary(
                 context, requirements_analysis, risk_analysis
@@ -119,7 +119,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             appendices = self._generate_appendices(
                 screenshot_analysis, requirements_analysis, user_flow_analysis
             )
-
+            
             # Create PRD document
             prd_document = self._create_prd_document(
                 context,
@@ -130,10 +130,10 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 atlassian_analysis,
                 requirements_analysis,
             )
-
+            
             # Generate markdown content
             markdown_content = self._generate_markdown(prd_document)
-
+            
             result = PRDAggregatorResult(
                 form_name=context.form_name,
                 prd_document=prd_document,
@@ -146,7 +146,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                     "appendices_count": len(appendices),
                 },
             )
-
+            
             self.logger.info(
                 "PRD generation complete",
                 form_name=context.form_name,
@@ -154,9 +154,9 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 word_count=result.word_count,
                 duration_ms=timer.elapsed_ms(),
             )
-
+            
             return self.create_success_result(result, timer)
-
+            
         except Exception as e:
             return self.create_error_result(e, timer)
 
@@ -242,7 +242,7 @@ Based on Jira analysis:
 - Total issues: {atlassian_analysis.total_issues}
 - Summary: {atlassian_analysis.summary[:500]}
 """
-
+        
         prompt = f"""Write the Overview section for "{context.form_name}" PRD:
 
 {jira_context}
@@ -257,9 +257,9 @@ Include:
 Write in professional technical documentation style."""
 
         content = await self.invoke_llm(context, prompt)
-
+        
         return PRDSection(title="1. Overview", content=content, order=1)
-
+    
     async def _generate_ui_section(
         self, context: AgentContext, screenshot_analysis: ScreenshotAnalysisResult
     ) -> PRDSection:
@@ -267,7 +267,7 @@ Write in professional technical documentation style."""
         screen_summary = "\n".join(
             [f"- {s.screen_name}: {s.purpose}" for s in screenshot_analysis.screen_analyses[:10]]
         )
-
+        
         content = f"""## User Interface Overview
 
 ### Screens Analyzed
@@ -280,7 +280,7 @@ Write in professional technical documentation style."""
 """
         for component, count in screenshot_analysis.component_inventory.items():
             content += f"- **{component}**: {count} instances\n"
-
+        
         content += f"""
 ### Common UI Patterns
 {chr(10).join(["- " + p for p in screenshot_analysis.common_patterns])}
@@ -291,9 +291,9 @@ Write in professional technical documentation style."""
 ### Modernization Recommendations
 {chr(10).join(["- " + r for r in screenshot_analysis.recommendations])}
 """
-
+        
         return PRDSection(title="2. User Interface", content=content, order=2)
-
+    
     async def _generate_functional_requirements_section(
         self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
     ) -> PRDSection:
@@ -322,9 +322,9 @@ Write in professional technical documentation style."""
 ---
 
 """
-
+        
         return PRDSection(title="3. Functional Requirements", content=content, order=3)
-
+    
     async def _generate_nfr_section(
         self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
     ) -> PRDSection:
@@ -346,9 +346,9 @@ Write in professional technical documentation style."""
 ---
 
 """
-
+        
         return PRDSection(title="4. Non-Functional Requirements", content=content, order=4)
-
+    
     async def _generate_data_model_section(
         self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
     ) -> PRDSection:
@@ -371,7 +371,7 @@ Write in professional technical documentation style."""
 """
             for field_item in entity.fields:
                 content += f"| {field_item.get('name', '')} | {field_item.get('type', '')} | {field_item.get('required', '')} |\n"
-
+            
             content += f"""
 **Relationships:**
 {chr(10).join(["- " + r for r in entity.relationships])}
@@ -382,9 +382,9 @@ Write in professional technical documentation style."""
 ---
 
 """
-
+        
         return PRDSection(title="5. Data Model", content=content, order=5)
-
+    
     async def _generate_user_flow_section(
         self, context: AgentContext, user_flow_analysis: UserFlowResult
     ) -> PRDSection:
@@ -429,7 +429,7 @@ Write in professional technical documentation style."""
 """
                 if step.alternative_paths:
                     content += f"- Alternatives: {', '.join(step.alternative_paths)}\n"
-
+            
             content += f"""
 **Postconditions:**
 {chr(10).join(["- " + p for p in flow.postconditions])}
@@ -439,7 +439,7 @@ Write in professional technical documentation style."""
 ---
 
 """
-
+        
         # Add flow diagram
         content += f"""### Flow Diagram
 
@@ -450,9 +450,9 @@ Write in professional technical documentation style."""
 ### Cross-Module Flows
 {chr(10).join(["- " + f for f in user_flow_analysis.cross_module_flows])}
 """
-
+        
         return PRDSection(title="6. User Flows", content=content, order=6)
-
+    
     async def _generate_business_rules_section(
         self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
     ) -> PRDSection:
@@ -471,9 +471,9 @@ Write in professional technical documentation style."""
 ### Out of Scope
 {chr(10).join(["- " + o for o in requirements_analysis.out_of_scope])}
 """
-
+        
         return PRDSection(title="7. Business Rules", content=content, order=7)
-
+    
     async def _generate_risk_section(
         self, context: AgentContext, risk_analysis: RiskAnalysisResult
     ) -> PRDSection:
@@ -521,7 +521,7 @@ Write in professional technical documentation style."""
 ---
 
 """
-
+        
         content += f"""
 ### Technical Debt Items
 {chr(10).join(["- " + t for t in risk_analysis.technical_debt_items])}
@@ -529,9 +529,9 @@ Write in professional technical documentation style."""
 ### Critical Success Factors
 {chr(10).join(["- " + s for s in risk_analysis.success_factors])}
 """
-
+        
         return PRDSection(title="8. Risk Assessment", content=content, order=8)
-
+    
     async def _generate_migration_section(
         self, context: AgentContext, risk_analysis: RiskAnalysisResult | None
     ) -> PRDSection:
@@ -542,7 +542,7 @@ Write in professional technical documentation style."""
             if risk_analysis
             else "Phased migration approach recommended."
         )
-
+        
         content = f"""## Migration Strategy
 
 ### Migration Complexity
@@ -576,9 +576,9 @@ Write in professional technical documentation style."""
 ### Rollback Strategy
 Detailed rollback procedures to be defined during implementation planning.
 """
-
+        
         return PRDSection(title="9. Migration Strategy", content=content, order=9)
-
+    
     async def _generate_executive_summary(
         self,
         context: AgentContext,
@@ -590,7 +590,7 @@ Detailed rollback procedures to be defined during implementation planning.
             len(requirements_analysis.functional_requirements) if requirements_analysis else 0
         )
         risk_level = risk_analysis.migration_complexity if risk_analysis else "medium"
-
+        
         prompt = f"""Write an executive summary for the "{context.form_name}" PRD:
 
 Key metrics:
@@ -607,7 +607,7 @@ The summary should:
 Write 3-4 paragraphs suitable for executive stakeholders."""
 
         return await self.invoke_llm(context, prompt)
-
+    
     def _generate_appendices(
         self,
         screenshot_analysis: ScreenshotAnalysisResult | None,
@@ -616,33 +616,33 @@ Write 3-4 paragraphs suitable for executive stakeholders."""
     ) -> list[dict[str, str]]:
         """Generate appendix content."""
         appendices = []
-
+        
         # Appendix A: Glossary
         appendices.append(
             {
-                "title": "Appendix A: Glossary",
+            "title": "Appendix A: Glossary",
                 "content": "Key terms and definitions used in this document.",
             }
         )
-
+        
         # Appendix B: Reference Materials
         appendices.append(
             {
-                "title": "Appendix B: Reference Materials",
+            "title": "Appendix B: Reference Materials",
                 "content": "Source documents and references consulted during analysis.",
             }
         )
-
+        
         # Appendix C: Change Log
         appendices.append(
             {
-                "title": "Appendix C: Change Log",
+            "title": "Appendix C: Change Log",
                 "content": "| Version | Date | Author | Changes |\n|---------|------|--------|---------|",
             }
         )
-
+        
         return appendices
-
+    
     def _generate_markdown(self, prd: PRDDocument) -> str:
         """Generate the complete markdown document."""
         md = f"""# {prd.title}
@@ -665,16 +665,16 @@ Write 3-4 paragraphs suitable for executive stakeholders."""
         # Generate TOC
         for section in prd.sections:
             md += f"- [{section.title}](#{section.title.lower().replace(' ', '-').replace('.', '')})\n"
-
+        
         md += "\n---\n\n"
-
+        
         # Add sections
         for section in prd.sections:
             md += f"# {section.title}\n\n{section.content}\n\n---\n\n"
-
+        
         # Add appendices
         md += "# Appendices\n\n"
         for appendix in prd.appendices:
             md += f"## {appendix['title']}\n\n{appendix['content']}\n\n"
-
+        
         return md

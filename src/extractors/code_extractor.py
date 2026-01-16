@@ -105,7 +105,7 @@ class CodeExtractor:
                 "Loaded dependency file",
                 file=str(dependency_file),
                 paths_count=len(dependency_paths),
-            )
+        )
 
         # Extract ZIP
         extracted_files = extract_zip(zip_path, extract_dir)
