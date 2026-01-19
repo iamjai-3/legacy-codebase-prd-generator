@@ -265,7 +265,16 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             )
             section_order += 1
 
-            # 7. Validation Rules section (NEW)
+            # 7. Source Tables & Database Mappings section (from existing PRD docs)
+            if requirements_analysis.source_tables or requirements_analysis.database_mappings:
+                sections.append(
+                    await self._generate_source_tables_section(
+                        context, requirements_analysis, section_order
+                    )
+                )
+                section_order += 1
+
+            # 8. Validation Rules section
             if requirements_analysis.validation_rules:
                 sections.append(
                     await self._generate_validation_section(
@@ -364,6 +373,12 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                     ),
                     "data_entities": (
                         len(requirements_analysis.data_requirements) if requirements_analysis else 0
+                    ),
+                    "source_tables": (
+                        len(requirements_analysis.source_tables) if requirements_analysis else 0
+                    ),
+                    "database_mappings": (
+                        len(requirements_analysis.database_mappings) if requirements_analysis else 0
                     ),
                     "business_logic_items": (
                         len(requirements_analysis.business_logic) if requirements_analysis else 0
@@ -711,6 +726,114 @@ request/response schemas suitable for implementation in any framework.
             content += "\n---\n"
 
         return PRDSection(title=f"{order}. Data Model", content=content, order=order)
+
+    async def _generate_source_tables_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        order: int,
+    ) -> PRDSection:
+        """Generate the source tables and database mappings section."""
+        content = """## Source Tables & Database Mappings
+
+Complete database schema documentation extracted from existing PRD documentation.
+This section provides the exact table structures needed for migration.
+
+"""
+        # Source Tables
+        if requirements_analysis.source_tables:
+            content += "### Database Source Tables\n\n"
+
+            for table in requirements_analysis.source_tables:
+                content += f"""#### {table.table_name}
+
+**Type:** {table.table_type.upper()}
+
+**Description:** {table.description}
+
+**Schema:**
+| Column Name | Data Type | Constraints | Description |
+|-------------|-----------|-------------|-------------|
+"""
+                for col in table.columns:
+                    constraints = (
+                        ", ".join(col.get("constraints", [])) if col.get("constraints") else "—"
+                    )
+                    content += f"| `{col.get('column_name', '')}` | {col.get('data_type', '')} | {constraints} | {col.get('description', '')} |\n"
+
+                if table.primary_key:
+                    content += f"\n**Primary Key:** {', '.join(['`' + pk + '`' for pk in table.primary_key])}\n"
+
+                if table.foreign_keys:
+                    content += "\n**Foreign Keys:**\n"
+                    for fk in table.foreign_keys:
+                        cols = ", ".join(fk.get("columns", []))
+                        refs_table = fk.get("references_table", "N/A")
+                        refs_cols = ", ".join(fk.get("references_columns", []))
+                        on_delete = fk.get("on_delete", "")
+                        content += f"- `{cols}` → `{refs_table}({refs_cols})`"
+                        if on_delete:
+                            content += f" ON DELETE {on_delete}"
+                        content += "\n"
+
+                if table.indexes:
+                    content += "\n**Indexes:**\n"
+                    for idx in table.indexes:
+                        unique = "UNIQUE " if idx.get("unique") else ""
+                        content += f"- `{idx.get('name', 'idx')}`: {unique}({', '.join(idx.get('columns', []))})\n"
+
+                if table.stored_procedures:
+                    content += "\n**Stored Procedures:**\n"
+                    for proc in table.stored_procedures:
+                        content += f"\n##### `{proc.get('name', 'procedure')}`\n"
+                        content += f"**Description:** {proc.get('description', '')}\n"
+                        if proc.get("parameters"):
+                            content += "\n**Parameters:**\n"
+                            for param in proc.get("parameters", []):
+                                content += f"- `{param.get('name', '')}` ({param.get('type', '')}) - {param.get('direction', 'IN')}\n"
+                        if proc.get("returns"):
+                            content += f"\n**Returns:** {proc.get('returns', '')}\n"
+
+                content += "\n---\n"
+
+        # Database Mappings
+        if requirements_analysis.database_mappings:
+            content += "\n### Entity-to-Table Mappings\n\n"
+            content += "Mappings between Java entity classes and database tables.\n\n"
+
+            for mapping in requirements_analysis.database_mappings:
+                content += f"""#### {mapping.entity_class} → {mapping.table_name}
+
+**Field Mappings:**
+| Java Field | Java Type | Column Name | Column Type | Annotations |
+|------------|-----------|-------------|-------------|-------------|
+"""
+                for fm in mapping.field_mappings:
+                    annotations = (
+                        ", ".join(fm.get("annotations", [])) if fm.get("annotations") else "—"
+                    )
+                    content += f"| `{fm.get('java_field', '')}` | {fm.get('java_type', '')} | `{fm.get('column_name', '')}` | {fm.get('column_type', '')} | {annotations} |\n"
+
+                if mapping.relationships:
+                    content += "\n**Relationships:**\n"
+                    for rel in mapping.relationships:
+                        content += f"- {rel.get('type', 'RELATED_TO')} `{rel.get('target_entity', '')}` (Table: `{rel.get('target_table', '')}`) via `{rel.get('join_column', '')}`\n"
+
+                if mapping.queries:
+                    content += "\n**Common Queries:**\n"
+                    for query in mapping.queries[:5]:
+                        content += (
+                            f"\n*{query.get('name', 'query')}* ({query.get('type', 'SELECT')}):\n"
+                        )
+                        content += f"```sql\n{query.get('sql_or_jpql', '')}\n```\n"
+                        if query.get("purpose"):
+                            content += f"Purpose: {query.get('purpose', '')}\n"
+
+                content += "\n---\n"
+
+        return PRDSection(
+            title=f"{order}. Source Tables & Database Mappings", content=content, order=order
+        )
 
     async def _generate_validation_section(
         self,

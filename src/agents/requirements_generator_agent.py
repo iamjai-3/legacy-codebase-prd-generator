@@ -147,6 +147,31 @@ class WorkflowSpec:
 
 
 @dataclass
+class SourceTable:
+    """Database source table specification."""
+
+    table_name: str
+    description: str
+    table_type: str  # primary, supporting, lookup, audit
+    columns: list[dict[str, Any]] = field(default_factory=list)
+    primary_key: list[str] = field(default_factory=list)
+    foreign_keys: list[dict[str, Any]] = field(default_factory=list)
+    indexes: list[dict[str, Any]] = field(default_factory=list)
+    stored_procedures: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
+class DatabaseMapping:
+    """Entity-to-table mapping specification."""
+
+    entity_class: str
+    table_name: str
+    field_mappings: list[dict[str, Any]] = field(default_factory=list)
+    relationships: list[dict[str, Any]] = field(default_factory=list)
+    queries: list[dict[str, Any]] = field(default_factory=list)
+
+
+@dataclass
 class RequirementsGeneratorResult:
     """Complete migration-ready requirements specification."""
 
@@ -159,6 +184,8 @@ class RequirementsGeneratorResult:
     integration_requirements: list[IntegrationRequirement]
     validation_rules: list[ValidationRule]
     workflow_specs: list[WorkflowSpec]
+    source_tables: list[SourceTable]  # Database source tables from PRD docs
+    database_mappings: list[DatabaseMapping]  # Entity-to-table mappings
     business_rules: list[str]
     assumptions: list[str]
     out_of_scope: list[str]
@@ -244,6 +271,14 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
                 context, code_files, kb_contexts
             )
 
+            # Extract source tables from existing PRD documentation
+            source_tables = await self._extract_source_tables(context, kb_contexts)
+
+            # Extract database mappings from code
+            database_mappings = await self._extract_database_mappings(
+                context, code_files, kb_contexts
+            )
+
             # Generate non-functional requirements
             non_functional_reqs = await self._generate_non_functional_requirements(
                 context, code_files, kb_contexts
@@ -273,6 +308,8 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
                 integration_requirements=integration_reqs,
                 validation_rules=validation_rules,
                 workflow_specs=workflow_specs,
+                source_tables=source_tables,
+                database_mappings=database_mappings,
                 business_rules=business_rules,
                 assumptions=assumptions,
                 out_of_scope=out_of_scope,
@@ -308,6 +345,8 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             "validation": "validation validate required field error message",
             "workflow": "workflow state transition approval process status",
             "existing_prd": "PRD requirements specification description functionality",
+            "source_tables": "source table schema column primary key foreign key constraint data type",
+            "database_mapping": "entity mapping field column annotation relationship join query",
         }
 
         for key, query in queries.items():
@@ -569,6 +608,83 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             )
             for i, r in enumerate(data, 1)
         ]
+
+    async def _extract_source_tables(
+        self,
+        context: AgentContext,
+        kb_contexts: dict[str, list[str]],
+    ) -> list[SourceTable]:
+        """Extract source table definitions from knowledge base."""
+        # Combine source table context from multiple queries
+        kb_context = self.format_context_for_prompt(
+            kb_contexts.get("source_tables", [])
+            + kb_contexts.get("database", [])
+            + kb_contexts.get("existing_prd", []),
+            max_contexts=10,
+        )
+
+        prompt = RequirementsPrompts.source_tables_extraction(context.form_name, kb_context)
+
+        data = extract_json_array(await self.invoke_llm(context, prompt))
+
+        return [
+            SourceTable(
+                table_name=r.get("table_name", ""),
+                description=r.get("description", ""),
+                table_type=r.get("table_type", "primary"),
+                columns=r.get("columns", []),
+                primary_key=r.get("primary_key", []),
+                foreign_keys=r.get("foreign_keys", []),
+                indexes=r.get("indexes", []),
+                stored_procedures=r.get("stored_procedures", []),
+            )
+            for r in data
+        ]
+
+    async def _extract_database_mappings(
+        self,
+        context: AgentContext,
+        code_files: list[CodeFile] | None,
+        kb_contexts: dict[str, list[str]],
+    ) -> list[DatabaseMapping]:
+        """Extract entity-to-table mappings from code."""
+        model_code = self._get_model_code(code_files)
+        kb_context = self.format_context_for_prompt(
+            kb_contexts.get("database_mapping", []) + kb_contexts.get("database", []),
+            max_contexts=8,
+        )
+
+        prompt = RequirementsPrompts.database_mappings(context.form_name, model_code, kb_context)
+
+        data = extract_json_array(await self.invoke_llm(context, prompt))
+
+        return [
+            DatabaseMapping(
+                entity_class=r.get("entity_class", ""),
+                table_name=r.get("table_name", ""),
+                field_mappings=r.get("field_mappings", []),
+                relationships=r.get("relationships", []),
+                queries=r.get("queries", []),
+            )
+            for r in data
+        ]
+
+    def _get_model_code(self, code_files: list[CodeFile] | None) -> str:
+        """Get model/entity layer code for database mapping extraction."""
+        if not code_files:
+            return self.NO_CODE_AVAILABLE
+
+        model_files = [
+            cf
+            for cf in code_files
+            if cf.file_type in ["model", "entity"]
+            or any(kw in cf.path.lower() for kw in ["model", "entity", "dto", "domain"])
+        ]
+
+        if not model_files:
+            return "No model code found."
+
+        return "\n\n".join(f"// File: {cf.path}\n{cf.content[:2000]}" for cf in model_files[:5])
 
     async def _generate_non_functional_requirements(
         self,

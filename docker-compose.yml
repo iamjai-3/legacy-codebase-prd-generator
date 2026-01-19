@@ -83,10 +83,44 @@ services:
       timeout: 20s
       retries: 3
 
+  # n8n Workflow Automation
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: prd-agent-n8n
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+    environment:
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=UTC
+      # Qdrant connection (accessible via Docker network)
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_URL=http://qdrant:6333
+      # Temporal connection
+      - TEMPORAL_HOST=temporal
+      - TEMPORAL_PORT=7233
+      # MinIO connection
+      - MINIO_HOST=minio
+      - MINIO_PORT=9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   qdrant_data:
   temporal_db_data:
   minio_data:
+  n8n_data:
 
 networks:
   default:

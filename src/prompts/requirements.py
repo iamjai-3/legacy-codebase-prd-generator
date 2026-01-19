@@ -158,6 +158,101 @@ Extract business logic in JSON format:
 Extract EVERY piece of logic, including edge cases and error handling."""
 
     @staticmethod
+    def source_tables_extraction(form_name: str, kb_context: str) -> str:
+        """Prompt for extracting source table definitions from knowledge base."""
+        return f"""Extract ALL database source tables and their complete schemas for "{form_name}" from the knowledge base.
+
+KNOWLEDGE BASE CONTEXT:
+{kb_context}
+
+Generate source table specifications in JSON format:
+[
+    {{
+        "table_name": "EXACT_TABLE_NAME",
+        "description": "Business purpose of this table",
+        "table_type": "primary|supporting|lookup|audit",
+        "columns": [
+            {{
+                "column_name": "COLUMN_NAME",
+                "data_type": "VARCHAR2(50)|NUMBER|TIMESTAMP|etc",
+                "constraints": ["PK", "NOT NULL", "FK to OTHER_TABLE"],
+                "description": "Business meaning of this column"
+            }}
+        ],
+        "primary_key": ["column1", "column2"],
+        "foreign_keys": [
+            {{
+                "columns": ["local_col"],
+                "references_table": "OTHER_TABLE",
+                "references_columns": ["other_col"],
+                "on_delete": "CASCADE|SET NULL|RESTRICT"
+            }}
+        ],
+        "indexes": [
+            {{"name": "IDX_NAME", "columns": ["col1", "col2"], "unique": false}}
+        ],
+        "stored_procedures": [
+            {{
+                "name": "procedure_name",
+                "description": "What it does",
+                "parameters": [{{"name": "param", "type": "type", "direction": "IN|OUT"}}],
+                "returns": "Description of return value"
+            }}
+        ]
+    }}
+]
+
+Extract ALL tables mentioned in the documentation including primary, supporting, and lookup tables."""
+
+    @staticmethod
+    def database_mappings(form_name: str, code_context: str, kb_context: str) -> str:
+        """Prompt for extracting database field mappings from code to tables."""
+        return f"""Analyze the code and documentation for "{form_name}" to extract database field mappings.
+
+CODE CONTEXT:
+{code_context}
+
+KNOWLEDGE BASE CONTEXT:
+{kb_context}
+
+Generate database mapping specifications in JSON format:
+[
+    {{
+        "entity_class": "JavaClassName",
+        "table_name": "DATABASE_TABLE_NAME",
+        "field_mappings": [
+            {{
+                "java_field": "fieldName",
+                "java_type": "String|Integer|Date|etc",
+                "column_name": "COLUMN_NAME",
+                "column_type": "VARCHAR2|NUMBER|etc",
+                "annotations": ["@Column", "@Id", "@ManyToOne"],
+                "validation": "Validation rules if any"
+            }}
+        ],
+        "relationships": [
+            {{
+                "type": "ONE_TO_MANY|MANY_TO_ONE|MANY_TO_MANY",
+                "target_entity": "OtherClassName",
+                "target_table": "OTHER_TABLE",
+                "join_column": "FK_COLUMN",
+                "fetch_type": "LAZY|EAGER"
+            }}
+        ],
+        "queries": [
+            {{
+                "name": "findByFleet",
+                "type": "SELECT|INSERT|UPDATE|DELETE",
+                "sql_or_jpql": "SELECT * FROM TABLE WHERE FLEET = ?",
+                "purpose": "What this query does"
+            }}
+        ]
+    }}
+]
+
+Include ALL entity-to-table mappings found in the code."""
+
+    @staticmethod
     def data_requirements(form_name: str, model_summary: str, database_context: str) -> str:
         """Prompt for generating comprehensive data requirements."""
         return f"""Analyze the data models and database operations for "{form_name}".

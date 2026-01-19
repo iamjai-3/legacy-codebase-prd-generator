@@ -133,11 +133,13 @@ def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: st
     from src.agents.requirements_generator_agent import (
         APISpecification,
         BusinessLogic,
+        DatabaseMapping,
         DataRequirement,
         FunctionalRequirement,
         IntegrationRequirement,
         NonFunctionalRequirement,
         RequirementsGeneratorResult,
+        SourceTable,
         ValidationRule,
         WorkflowSpec,
     )
@@ -280,6 +282,33 @@ def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: st
         for wf in data.get("workflow_specs", [])
     ]
 
+    # Reconstruct source tables
+    source_tables = [
+        SourceTable(
+            table_name=st.get("table_name", ""),
+            description=st.get("description", ""),
+            table_type=st.get("table_type", "primary"),
+            columns=st.get("columns", []),
+            primary_key=st.get("primary_key", []),
+            foreign_keys=st.get("foreign_keys", []),
+            indexes=st.get("indexes", []),
+            stored_procedures=st.get("stored_procedures", []),
+        )
+        for st in data.get("source_tables", [])
+    ]
+
+    # Reconstruct database mappings
+    database_mappings = [
+        DatabaseMapping(
+            entity_class=dm.get("entity_class", ""),
+            table_name=dm.get("table_name", ""),
+            field_mappings=dm.get("field_mappings", []),
+            relationships=dm.get("relationships", []),
+            queries=dm.get("queries", []),
+        )
+        for dm in data.get("database_mappings", [])
+    ]
+
     return RequirementsGeneratorResult(
         form_name=form_name,
         functional_requirements=func_reqs,
@@ -290,6 +319,8 @@ def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: st
         integration_requirements=integration_reqs,
         validation_rules=validation_rules,
         workflow_specs=workflow_specs,
+        source_tables=source_tables,
+        database_mappings=database_mappings,
         business_rules=data.get("business_rules", []),
         assumptions=data.get("assumptions", []),
         out_of_scope=data.get("out_of_scope", []),
