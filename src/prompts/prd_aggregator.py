@@ -231,9 +231,13 @@ Include enough detail to implement the workflow engine."""
         entity_count: int,
         integration_count: int,
         complexity: str,
+        kb_context: str = "",
     ) -> str:
         """Prompt for generating executive summary."""
         return f"""Write an executive summary for the "{form_name}" migration PRD.
+
+ACTUAL MODULE CONTEXT FROM KNOWLEDGE BASE:
+{kb_context}
 
 METRICS:
 - Functional Requirements: {req_count}
@@ -242,9 +246,15 @@ METRICS:
 - External Integrations: {integration_count}
 - Assessed Complexity: {complexity}
 
+CRITICAL INSTRUCTIONS:
+1. Use ONLY the information from the KNOWLEDGE BASE CONTEXT above
+2. Do NOT invent or hallucinate any entities, tables, or features
+3. Reference the ACTUAL module name, purpose, and features described in the context
+4. Use SPECIFIC business terms from the context (e.g., fleet, ATA chapter, alert rates)
+
 The summary should include (4-5 paragraphs):
-1. **Module Overview**: What this module does and its business importance
-2. **Technical Scope**: Key technical components being migrated
+1. **Module Overview**: What this SPECIFIC module does based on the context above
+2. **Technical Scope**: ACTUAL data entities and tables mentioned in the context
 3. **Migration Approach**: Recommended strategy based on complexity
 4. **Critical Considerations**: Key risks, dependencies, and success factors
 5. **Effort Estimate**: High-level timeline and resource estimate

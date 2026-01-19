@@ -1200,6 +1200,14 @@ stateDiagram-v2
         )
         complexity = self._assess_complexity(requirements_analysis)
 
+        # Include rich KB context for the executive summary
+        kb_context = self.format_context_for_prompt(
+            kb_contexts.get("existing_prd", [])
+            + kb_contexts.get("business_logic", [])
+            + kb_contexts.get("source_tables", []),
+            max_contexts=10,
+        )
+
         prompt = PRDAggregatorPrompts.executive_summary(
             context.form_name,
             req_count,
@@ -1207,6 +1215,7 @@ stateDiagram-v2
             entity_count,
             integration_count,
             complexity,
+            kb_context,
         )
 
         return await self.invoke_llm(context, prompt)
