@@ -275,6 +275,9 @@ class PRDGenerationWorkflow:
                 extraction["jira"],
                 extraction["existing_prd"],  # Include existing PRD documents
                 input.recreate_vector_collection,
+                extraction["code"].get(
+                    "extract_dir"
+                ),  # Pass extract directory to read file content
             ],
             **opts,
         )

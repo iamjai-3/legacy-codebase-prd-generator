@@ -119,10 +119,10 @@ prd-agent generate \
 
 
 prd-agent generate \
-  -f le07 \
-  -z src/templates_code_zip/java.zip \
-  -d src/form_dependencies/le07_dependencies.txt \
-  -b le07 \
+  -f le11 \
+  -z src/templates_code_zip/oases-master.zip \
+  -d src/form_dependencies/le11_dependencies.txt \
+  -b le11 \
   -o ./output \
   --skip-jira
 ```

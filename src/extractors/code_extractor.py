@@ -7,6 +7,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from langchain_core.documents import Document
+import javalang
+import ast
+import sqlparse
 
 from src.config.settings import get_settings
 from src.utils.dependency_parser import (
@@ -36,6 +39,9 @@ class CodeFile:
     methods: list[str] = field(default_factory=list)
     imports: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
+    fields: list[str] = field(default_factory=list)
+    extends: str | None = None
+    implements: list[str] = field(default_factory=list)
     line_count: int = 0
 
 
@@ -105,7 +111,7 @@ class CodeExtractor:
                 "Loaded dependency file",
                 file=str(dependency_file),
                 paths_count=len(dependency_paths),
-        )
+            )
 
         # Extract ZIP
         extracted_files = extract_zip(zip_path, extract_dir)
@@ -235,9 +241,9 @@ class CodeExtractor:
             file_type = self._determine_file_type(file_path, content)
 
             # Extract code structure based on language
-            classes, methods, imports = self._extract_code_structure(content, language)
+            classes, methods, imports, fields, extends, implements = self._extract_code_structure_ast(content, language)
 
-            # Extract dependencies
+            # Extract dependencies (keep existing method for regex fallback/augmentation)
             dependencies = self._extract_dependencies(content, language)
 
             return CodeFile(
@@ -249,6 +255,9 @@ class CodeExtractor:
                 methods=methods,
                 imports=imports,
                 dependencies=dependencies,
+                fields=fields,
+                extends=extends,
+                implements=implements,
                 line_count=content.count("\n") + 1,
             )
 
@@ -283,6 +292,198 @@ class CodeExtractor:
             return "test"
         else:
             return "source"
+
+    def _extract_code_structure_ast(
+        self, content: str, language: str
+    ) -> tuple[list[str], list[str], list[str], list[str], str | None, list[str]]:
+        """
+        Extract code structure using AST parsing.
+
+        Returns:
+            Tuple of (classes, methods, imports, fields, extends, implements)
+        """
+        classes: list[str] = []
+        methods: list[str] = []
+        imports: list[str] = []
+        fields: list[str] = []
+        extends: str | None = None
+        implements: list[str] = []
+
+        try:
+            if language == "java":
+                return self._parse_java_ast(content)
+            elif language == "python":
+                return self._parse_python_ast(content)
+            elif language == "sql":
+                return self._parse_sql_ast(content)
+        except Exception as e:
+            logger.warning(f"AST parsing failed for {language}, falling back to regex: {e}")
+        
+        # Fallback to regex (for other languages or if AST fails)
+        # Note: Regex doesn't extract fields, extends, implements reliably yet
+        c, m, i = self._extract_code_structure(content, language)
+        return c, m, i, [], None, []
+
+    def _parse_java_ast(self, content: str) -> tuple[list[str], list[str], list[str], list[str], str | None, list[str]]:
+        """Parse Java Content using javalang."""
+        classes = []
+        methods = []
+        imports = []
+        fields = []
+        extends = None
+        implements = []
+
+        try:
+            tree = javalang.parse.parse(content)
+            
+            for path, node in tree.filter(javalang.tree.Import):
+                imports.append(node.path)
+
+            for path, node in tree.filter(javalang.tree.ClassDeclaration):
+                classes.append(node.name)
+                if node.extends:
+                    extends = node.extends.name
+                if node.implements:
+                    implements.extend([i.name for i in node.implements])
+                
+                for field in node.fields:
+                    for declarator in field.declarators:
+                        fields.append(declarator.name)
+                
+                for method in node.methods:
+                    methods.append(method.name)
+                    
+            for path, node in tree.filter(javalang.tree.InterfaceDeclaration):
+                classes.append(node.name)
+                if node.extends:
+                    implements.extend([i.name for i in node.extends])
+
+        except Exception as e:
+             logger.debug(f"Javalang parse error: {e}")
+             raise e
+
+        return classes, methods, imports, fields, extends, implements
+
+    def _parse_python_ast(self, content: str) -> tuple[list[str], list[str], list[str], list[str], str | None, list[str]]:
+        """Parse Python Content using ast."""
+        classes = []
+        methods = []
+        imports = []
+        fields = []
+        extends = None
+        
+        try:
+            tree = ast.parse(content)
+            
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        imports.append(alias.name)
+                elif isinstance(node, ast.ImportFrom):
+                    module = node.module or ""
+                    for alias in node.names:
+                        imports.append(f"{module}.{alias.name}")
+                elif isinstance(node, ast.ClassDef):
+                    classes.append(node.name)
+                    for base in node.bases:
+                        if isinstance(base, ast.Name):
+                            extends = base.id # Simple single inheritance tracking for now
+                    
+                    # Heuristic for methods
+                    for item in node.body:
+                        if isinstance(item, ast.FunctionDef):
+                            methods.append(item.name)
+                            
+                elif isinstance(node, ast.FunctionDef):
+                    # Top level functions or methods (already captured if inside class)
+                    if node.name not in methods:
+                        methods.append(node.name)
+
+        except Exception as e:
+            logger.debug(f"Python AST parse error: {e}")
+            raise e
+
+        return classes, methods, imports, fields, extends, []
+
+    def _parse_sql_ast(self, content: str) -> tuple[list[str], list[str], list[str], list[str], str | None, list[str]]:
+        """Parse SQL Content using sqlparse."""
+        tables = []
+        operations = []
+        columns = []
+        
+        try:
+            parsed = sqlparse.parse(content)
+            for statement in parsed:
+                # Extract statement type (operation)
+                type_ = statement.get_type()
+                if type_ != "UNKNOWN":
+                    operations.append(type_)
+                
+                # Setup DDL extraction (CREATE TABLE)
+                if type_ == "CREATE":
+                    # Simple heuristic traversal for CREATE TABLE
+                    for token in statement.tokens:
+                        if isinstance(token, sqlparse.sql.Identifier):
+                            tables.append(token.get_real_name())
+                        elif isinstance(token, sqlparse.sql.Parenthesis):
+                            # Extract columns inside parenthesis
+                            for sub_token in token.tokens:
+                                if isinstance(sub_token, sqlparse.sql.IdentifierList):
+                                    for identifier in sub_token.get_identifiers():
+                                         if isinstance(identifier, sqlparse.sql.Identifier):
+                                             columns.append(identifier.get_real_name())
+                                elif isinstance(sub_token, sqlparse.sql.Identifier):
+                                     columns.append(sub_token.get_real_name())
+
+                # DML Extraction (INSERT/UPDATE/SELECT) finding tables
+                # sqlparse is tricky for this without deep traversal, using basic token matching for tables
+                from sqlparse.sql import IdentifierList, Identifier, Function
+                from sqlparse.tokens import Keyword, DML
+                
+                # Walker for Tables
+                def get_tables(stm):
+                    tables = set()
+                    idx = 0
+                    if not hasattr(stm, 'tokens'): return tables
+                    
+                    while idx < len(stm.tokens):
+                        token = stm.tokens[idx]
+                        if token.is_group:
+                            tables.update(get_tables(token))
+                        
+                        # Keyword FROM or JOIN or UPDATE or INTO
+                        if token.ttype in (Keyword, Keyword.DML) and token.value.upper() in ["FROM", "JOIN", "UPDATE", "INTO"]:
+                            # Look ahead for identifier
+                            idx += 1
+                            while idx < len(stm.tokens) and stm.tokens[idx].ttype in (sqlparse.tokens.Whitespace, sqlparse.tokens.Comment):
+                                idx += 1
+                            if idx < len(stm.tokens):
+                                next_token = stm.tokens[idx]
+                                if isinstance(next_token, Identifier):
+                                    tables.add(next_token.get_real_name())
+                                elif isinstance(next_token, IdentifierList):
+                                    for id_token in next_token.get_identifiers():
+                                         if isinstance(id_token, Identifier):
+                                            tables.add(id_token.get_real_name())
+                                elif isinstance(next_token, Function):
+                                     tables.add(next_token.get_real_name())
+                        idx += 1
+                    return tables
+
+                found_tables = get_tables(statement)
+                tables.extend(list(found_tables))
+
+            # Dedupe
+            tables = list(set(tables))
+            operations = list(set(operations))
+            columns = list(set(columns))
+
+        except Exception as e:
+            logger.debug(f"SQL parsing error: {e}")
+            # Fallback to simple regex for tables if sqlparse fails significantly?
+            # For now just log
+        
+        return tables, operations, [], columns, None, []
 
     def _extract_code_structure(
         self, content: str, language: str
@@ -386,6 +587,9 @@ class CodeExtractor:
                 "file_type": code_file.file_type,
                 "classes": code_file.classes,
                 "methods": code_file.methods[:20],  # Limit for metadata
+                "fields": code_file.fields[:20],
+                "extends": code_file.extends,
+                "implements": code_file.implements,
                 "line_count": code_file.line_count,
                 "doc_type": "code",
             }

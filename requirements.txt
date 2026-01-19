@@ -47,6 +47,7 @@ tenacity>=9.0.0
 # Code Analysis
 tree-sitter>=0.23.4
 javalang>=0.13.0
+sqlparse>=0.5.0
 
 # Development
 pytest>=8.3.4

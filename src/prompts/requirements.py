@@ -160,49 +160,47 @@ Extract EVERY piece of logic, including edge cases and error handling."""
     @staticmethod
     def source_tables_extraction(form_name: str, kb_context: str) -> str:
         """Prompt for extracting source table definitions from knowledge base."""
-        return f"""Extract ALL database source tables and their complete schemas for "{form_name}" from the knowledge base.
+        return f"""Extract ONLY the database source tables that are EXPLICITLY DOCUMENTED in the knowledge base for "{form_name}".
+
+CRITICAL RULES:
+1. ONLY extract tables that are EXPLICITLY mentioned in the provided context
+2. DO NOT invent, fabricate, or hallucinate any tables, columns, or data types
+3. If no tables are documented, return an empty array []
+4. Use EXACT names, data types, and constraints as written in the documentation
+5. If column details are not provided, omit the columns array
 
 KNOWLEDGE BASE CONTEXT:
 {kb_context}
 
-Generate source table specifications in JSON format:
+Generate source table specifications in JSON format (ONLY for tables explicitly mentioned above):
 [
     {{
-        "table_name": "EXACT_TABLE_NAME",
-        "description": "Business purpose of this table",
+        "table_name": "EXACT_TABLE_NAME_FROM_DOCS",
+        "description": "Purpose as described in docs",
         "table_type": "primary|supporting|lookup|audit",
         "columns": [
             {{
-                "column_name": "COLUMN_NAME",
-                "data_type": "VARCHAR2(50)|NUMBER|TIMESTAMP|etc",
-                "constraints": ["PK", "NOT NULL", "FK to OTHER_TABLE"],
-                "description": "Business meaning of this column"
+                "column_name": "COLUMN_NAME_FROM_DOCS",
+                "data_type": "EXACT_TYPE_FROM_DOCS",
+                "constraints": ["EXACT_CONSTRAINTS_FROM_DOCS"],
+                "description": "Description from docs"
             }}
         ],
-        "primary_key": ["column1", "column2"],
+        "primary_key": ["columns_from_docs"],
         "foreign_keys": [
             {{
-                "columns": ["local_col"],
-                "references_table": "OTHER_TABLE",
-                "references_columns": ["other_col"],
-                "on_delete": "CASCADE|SET NULL|RESTRICT"
+                "columns": ["local_col_from_docs"],
+                "references_table": "TABLE_FROM_DOCS",
+                "references_columns": ["col_from_docs"],
+                "on_delete": "AS_SPECIFIED_IN_DOCS"
             }}
         ],
-        "indexes": [
-            {{"name": "IDX_NAME", "columns": ["col1", "col2"], "unique": false}}
-        ],
-        "stored_procedures": [
-            {{
-                "name": "procedure_name",
-                "description": "What it does",
-                "parameters": [{{"name": "param", "type": "type", "direction": "IN|OUT"}}],
-                "returns": "Description of return value"
-            }}
-        ]
+        "indexes": [],
+        "stored_procedures": []
     }}
 ]
 
-Extract ALL tables mentioned in the documentation including primary, supporting, and lookup tables."""
+If the context does not contain explicit table definitions, return: []"""
 
     @staticmethod
     def database_mappings(form_name: str, code_context: str, kb_context: str) -> str:
@@ -255,7 +253,17 @@ Include ALL entity-to-table mappings found in the code."""
     @staticmethod
     def data_requirements(form_name: str, model_summary: str, database_context: str) -> str:
         """Prompt for generating comprehensive data requirements."""
-        return f"""Analyze the data models and database operations for "{form_name}".
+        return f"""Extract ONLY data entities that are EXPLICITLY present in the "{form_name}" source code and documentation.
+
+CRITICAL RULES:
+1. ONLY extract entities/tables that appear in the provided code or documentation
+2. DO NOT invent generic entities (like Customer, Order, Transaction, User) unless they appear in the code
+3. Use EXACT class names, table names, and column names from the source
+4. For legacy Java Swing applications, focus on:
+   - UI component models (TableModels, ComboBox data)
+   - Database tables referenced in the code (FLEET_CHAPTER, CHAPTER_ALERT_RATES, etc.)
+   - Form field data structures
+5. If no entities are documented, return an empty array []
 
 MODEL/ENTITY CODE:
 {model_summary}
@@ -263,48 +271,47 @@ MODEL/ENTITY CODE:
 DATABASE CONTEXT FROM KNOWLEDGE BASE:
 {database_context}
 
-Generate comprehensive data requirements in JSON format:
+Generate data requirements in JSON format (ONLY for entities found in the code):
 [
     {{
-        "entity_name": "EntityName",
-        "description": "Business purpose of this entity",
-        "source_table": "EXACT_TABLE_NAME",
-        "source_class": "JavaClassName.java",
+        "entity_name": "ACTUAL_CLASS_OR_TABLE_NAME",
+        "description": "Purpose inferred from code context",
+        "source_table": "ACTUAL_TABLE_NAME_FROM_CODE_OR_N/A",
+        "source_class": "ACTUAL_CLASS.java",
         "fields": [
             {{
-                "name": "fieldName",
-                "column": "COLUMN_NAME",
-                "type": "data_type",
-                "java_type": "Java type in legacy code",
-                "constraints": ["NOT NULL", "UNIQUE", "FK to TABLE"],
-                "validation": "Validation rules from code",
-                "default": "Default value if any",
-                "description": "Business meaning"
+                "name": "ACTUAL_FIELD_NAME",
+                "column": "ACTUAL_COLUMN_NAME_OR_N/A",
+                "type": "ACTUAL_TYPE_FROM_CODE",
+                "java_type": "ACTUAL_JAVA_TYPE",
+                "constraints": ["ACTUAL_CONSTRAINTS"],
+                "validation": "FROM_CODE_OR_N/A",
+                "default": "FROM_CODE_OR_N/A",
+                "description": "Inferred from context"
             }}
         ],
-        "primary_key": ["column1", "column2"],
-        "foreign_keys": [
-            {{"columns": ["col"], "references": "OTHER_TABLE(col)", "on_delete": "CASCADE"}}
-        ],
-        "indexes": [
-            {{"name": "IDX_NAME", "columns": ["col1", "col2"], "unique": false}}
-        ],
-        "relationships": [
-            {{"type": "ONE_TO_MANY|MANY_TO_ONE|MANY_TO_MANY", "target": "OtherEntity", "join_column": "col"}}
-        ],
-        "business_rules": ["Rules that affect this data"],
-        "sample_queries": [
-            {{"purpose": "what query does", "sql": "SELECT ..."}}
-        ]
+        "primary_key": ["ACTUAL_PK_COLUMNS"],
+        "foreign_keys": [],
+        "indexes": [],
+        "relationships": [],
+        "business_rules": ["RULES_FROM_CODE"],
+        "sample_queries": []
     }}
 ]
 
-Include ALL entities and their complete specifications."""
+If no data entities are found in the code, return: []"""
 
     @staticmethod
     def validation_rules(form_name: str, validation_code: str, context_text: str) -> str:
         """Prompt for extracting precise validation rules."""
-        return f"""Extract ALL validation rules from the "{form_name}" source code.
+        return f"""Extract ONLY validation rules that are EXPLICITLY present in the "{form_name}" source code.
+
+CRITICAL RULES:
+1. ONLY extract validations that appear in the provided code snippets
+2. DO NOT invent generic validations (like email, password, username) unless they appear in the code
+3. Use EXACT field names, conditions, and error messages from the code
+4. If no validations are found, return an empty array []
+5. Include the EXACT source location (file:line) where the validation appears
 
 VALIDATION CODE SNIPPETS:
 {validation_code}
@@ -312,29 +319,40 @@ VALIDATION CODE SNIPPETS:
 CONTEXT FROM KNOWLEDGE BASE:
 {context_text}
 
-Generate validation rules in JSON format:
+Generate validation rules in JSON format (ONLY for validations found in the code above):
 [
     {{
         "rule_id": "VR-001",
-        "field": "exact field name being validated",
-        "entity": "Entity/Form this belongs to",
-        "type": "required|format|range|business|cross-field|async",
-        "condition": "Exact condition from code (e.g., value != null && value.length() >= 3)",
-        "error_message": "Error message shown to user",
-        "error_code": "Error code if any",
-        "description": "Business reason for this validation",
-        "when_applied": "On submit|On blur|Real-time|Before save",
-        "dependencies": ["Other fields this validation depends on"],
-        "source_location": "ClassName.java:lineNumber"
+        "field": "EXACT_FIELD_NAME_FROM_CODE",
+        "entity": "{form_name}",
+        "type": "required|format|range|business|cross-field",
+        "condition": "EXACT_CONDITION_FROM_CODE",
+        "error_message": "EXACT_MESSAGE_FROM_CODE_OR_N/A",
+        "error_code": "CODE_FROM_SOURCE_OR_EMPTY",
+        "description": "What this validation checks based on code logic",
+        "when_applied": "Inferred from code context",
+        "dependencies": ["ACTUAL_DEPENDENCIES_FROM_CODE"],
+        "source_location": "ACTUAL_FILE.java:ACTUAL_LINE"
     }}
 ]
 
-Include field validations, business rule validations, and cross-field validations."""
+If no validation logic is found in the code, return: []"""
 
     @staticmethod
     def integration_requirements(form_name: str, integration_code: str, context: str) -> str:
         """Prompt for extracting integration specifications."""
-        return f"""Analyze the integration code for "{form_name}" to extract all external system connections.
+        return f"""Extract ONLY integrations that are EXPLICITLY present in the "{form_name}" source code.
+
+CRITICAL RULES:
+1. ONLY document integrations that appear in the provided code (HTTP clients, API calls, database connections, message queues, COBOL calls)
+2. DO NOT invent integrations like "Payment Gateway", "CRM", "Email Service" unless they appear in the code
+3. For legacy Java Swing applications, look for:
+   - COBOL integration via csBlock, paras.send(), etc.
+   - Oracle/database calls via JDBC, stored procedures
+   - File I/O operations
+   - Internal service calls
+4. Use EXACT class names, method names, and endpoints from the code
+5. If no external integrations are found, return an empty array []
 
 INTEGRATION CODE:
 {integration_code}
@@ -342,36 +360,36 @@ INTEGRATION CODE:
 CONTEXT:
 {context}
 
-Generate integration specifications in JSON format:
+Generate integration specifications in JSON format (ONLY for integrations found in the code):
 [
     {{
         "integration_id": "INT-001",
-        "name": "Integration name",
-        "type": "REST_API|SOAP|DATABASE|MESSAGE_QUEUE|FILE|LEGACY_SYSTEM",
+        "name": "ACTUAL_INTEGRATION_NAME_FROM_CODE",
+        "type": "REST_API|SOAP|DATABASE|MESSAGE_QUEUE|FILE|LEGACY_COBOL",
         "direction": "INBOUND|OUTBOUND|BIDIRECTIONAL",
-        "external_system": "Name of external system",
-        "purpose": "Business purpose of this integration",
+        "external_system": "ACTUAL_SYSTEM_FROM_CODE",
+        "purpose": "Purpose inferred from code context",
         "specification": {{
-            "protocol": "HTTP/HTTPS/TCP/etc",
-            "endpoint": "URL or connection string",
-            "authentication": {{"type": "OAuth2|Basic|API_KEY", "details": "specifics"}},
-            "request_format": "JSON|XML|Fixed-width|etc",
-            "response_format": "JSON|XML|etc"
+            "protocol": "ACTUAL_PROTOCOL",
+            "endpoint": "ACTUAL_ENDPOINT_OR_METHOD",
+            "authentication": {{"type": "AS_IN_CODE", "details": "FROM_CODE"}},
+            "request_format": "AS_IN_CODE",
+            "response_format": "AS_IN_CODE"
         }},
         "data_mapping": [
-            {{"source_field": "field", "target_field": "field", "transformation": "if any"}}
+            {{"source_field": "ACTUAL_FIELD", "target_field": "ACTUAL_FIELD", "transformation": "FROM_CODE"}}
         ],
         "error_handling": {{
-            "retry_policy": "description",
-            "fallback": "what happens on failure",
-            "alerts": "who gets notified"
+            "retry_policy": "AS_IN_CODE_OR_N/A",
+            "fallback": "AS_IN_CODE_OR_N/A",
+            "alerts": "AS_IN_CODE_OR_N/A"
         }},
-        "frequency": "Real-time|Batch|Scheduled",
-        "source_files": ["path/to/Integration.java"]
+        "frequency": "INFERRED_FROM_CODE",
+        "source_files": ["ACTUAL_FILE.java"]
     }}
 ]
 
-Document ALL integrations including internal service calls."""
+If no integrations are found in the code, return: []"""
 
     @staticmethod
     def workflow_extraction(form_name: str, workflow_code: str) -> str:

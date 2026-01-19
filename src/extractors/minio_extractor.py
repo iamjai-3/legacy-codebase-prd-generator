@@ -130,20 +130,20 @@ class MinioExtractor:
                 # Check if it's a supported image format
                 ext = Path(obj.object_name).suffix.lower()
                 if ext in self.SUPPORTED_FORMATS:
-                    # If bucket name is form name, only include images that match form name pattern
+                    # If bucket name is form name, include ALL images in the bucket
+                    # (the bucket itself provides the form context)
                     if bucket.lower() == form_name.lower():
+                        image_objects.append(obj)
+                    else:
+                        # For general buckets, filter by form name in path
                         obj_name_lower = obj.object_name.lower()
                         form_name_lower = form_name.lower()
-                        # Include if filename starts with form name or is in form_name folder
                         if (
                             obj_name_lower.startswith(form_name_lower)
                             or f"/{form_name_lower}/" in obj_name_lower
                             or obj_name_lower.startswith(f"{form_name_lower}.")
                         ):
                             image_objects.append(obj)
-                    else:
-                        # Include all images
-                        image_objects.append(obj)
 
             # Sort by object name to process in order
             image_objects.sort(key=lambda x: x.object_name)

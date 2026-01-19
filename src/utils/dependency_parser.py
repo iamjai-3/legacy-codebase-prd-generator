@@ -4,7 +4,6 @@ Utility to parse dependency files and extract file paths.
 
 import re
 from pathlib import Path
-from typing import Set
 
 from src.utils.logging_config import get_logger
 
@@ -33,15 +32,16 @@ def parse_dependency_file(dependency_file: str | Path) -> list[str]:
         return []
 
     content = dependency_file.read_text(encoding="utf-8")
-    paths: Set[str] = set()
+    paths: set[str] = set()
 
     # Pattern to match file paths (handles various formats)
     # Matches paths like:
     # - src/main/java/options/le07.java
+    # - src/main/database/baseline/release0/TABLES/chapter_alert_rates.sql
     # - /absolute/path/to/file.java
     # - file.java (simple filename)
     path_pattern = re.compile(
-        r"(?:^|\s)([a-zA-Z0-9_\-./\\]+\.(?:java|sql|form|xml|properties|py|js|ts|cs|tsx))(?:\s|$)",
+        r"(?:^|\s)([a-zA-Z0-9_\-./\\]+\.(?:java|sql|form|xml|properties|py|js|ts|cs|tsx|jsx|tsx))(?:\s|$)",
         re.MULTILINE,
     )
 
@@ -54,10 +54,16 @@ def parse_dependency_file(dependency_file: str | Path) -> list[str]:
             not line
             or line.startswith("#")
             or line.startswith("=")
-            or line.startswith("-")
+            or (
+                line.startswith("-")
+                and not line.endswith((".java", ".sql", ".form", ".xml", ".properties"))
+            )
             or line.upper().startswith("SECTION")
             or line.upper().startswith("END")
-            or ":" in line and not "/" in line  # Likely a section header like "1. MAIN FORM FILES"
+            or (line.upper().startswith("EXTERNAL") and "DEPENDENCIES" in line.upper())
+            or (
+                ":" in line and "/" not in line and not line.endswith((".java", ".sql", ".form"))
+            )  # Section header
         ):
             continue
 
@@ -67,7 +73,7 @@ def parse_dependency_file(dependency_file: str | Path) -> list[str]:
             # Clean up the path
             path = match.strip()
             # Remove leading/trailing quotes if present
-            path = path.strip('"\'')
+            path = path.strip("\"'")
             # Normalize path separators
             path = path.replace("\\", "/")
             # Remove leading slash if present (to make it relative)
@@ -77,25 +83,45 @@ def parse_dependency_file(dependency_file: str | Path) -> list[str]:
                 paths.add(path)
 
         # If the line itself looks like a path, add it
-        if "/" in line or line.endswith((".java", ".sql", ".form", ".xml", ".properties")):
+        # This handles lines that are just file paths without other text
+        if "/" in line or line.endswith(
+            (".java", ".sql", ".form", ".xml", ".properties", ".py", ".js", ".ts", ".jsx", ".tsx")
+        ):
             # Check if it's not a section header or description text
             if (
                 not re.match(r"^\d+\.", line)
                 and not line.startswith("=")
                 and not line.startswith("This")
                 and not line.startswith("The")
-                and not "contains" in line.lower()
-                and not "handles" in line.lower()
-                and len(line.split()) < 10  # Avoid long descriptive text
+                and not line.startswith("Field")
+                and not line.startswith("The following")
+                and "contains" not in line.lower()
+                and "handles" not in line.lower()
+                and "used" not in line.lower()
+                or line.endswith((".java", ".sql", ".form"))  # Allow if it's a file path
+                and len(line.split()) < 15  # Allow slightly longer lines for SQL paths
             ):
-                cleaned = line.strip('"\'')
+                cleaned = line.strip("\"'")
                 cleaned = cleaned.replace("\\", "/")
                 if cleaned.startswith("/"):
                     cleaned = cleaned[1:]
                 # Only add if it looks like a file path (has extension or directory structure)
                 if cleaned and (
-                    cleaned.endswith((".java", ".sql", ".form", ".xml", ".properties", ".py", ".js", ".ts"))
-                    or ("/" in cleaned and "." in cleaned)
+                    cleaned.endswith(
+                        (
+                            ".java",
+                            ".sql",
+                            ".form",
+                            ".xml",
+                            ".properties",
+                            ".py",
+                            ".js",
+                            ".ts",
+                            ".jsx",
+                            ".tsx",
+                        )
+                    )
+                    or ("/" in cleaned and "." in cleaned and ":" not in cleaned)
                 ):
                     paths.add(cleaned)
 
@@ -157,25 +183,40 @@ def match_file_path(file_path: Path, dependency_paths: list[str], extract_root: 
     # Normalize the relative path
     normalized_relative = str(relative_path).replace("\\", "/")
 
+    # Remove common ZIP extraction prefixes (e.g., "oases-master/", "java/")
+    # This handles cases where ZIP contains a root folder
+    normalized_relative_clean = normalized_relative
+    for prefix in ["oases-master/", "java/", "src/"]:
+        if normalized_relative_clean.startswith(prefix):
+            normalized_relative_clean = normalized_relative_clean[len(prefix) :]
+            break
+
     # Check against each dependency path
     for dep_path in dependency_paths:
         normalized_dep = normalize_path_for_matching(dep_path)
 
-        # Match by full path
-        if normalized_relative == normalized_dep:
+        # Match by full path (try both with and without prefix)
+        if normalized_relative == normalized_dep or normalized_relative_clean == normalized_dep:
+            return True
+
+        # Match by path ending (handles cases where zip structure differs)
+        # e.g., "oases-master/src/main/java/options/le11.java" matches "src/main/java/options/le11.java"
+        if normalized_relative.endswith(normalized_dep) or normalized_relative_clean.endswith(
+            normalized_dep
+        ):
+            return True
+        if normalized_dep.endswith(normalized_relative) or normalized_dep.endswith(
+            normalized_relative_clean
+        ):
             return True
 
         # Match by filename if dependency path is just a filename
         if "/" not in normalized_dep and file_path.name == normalized_dep:
             return True
 
-        # Match by path ending (handles cases where zip structure differs)
-        if normalized_relative.endswith(normalized_dep) or normalized_dep.endswith(normalized_relative):
-            return True
-
-        # Match by filename component
-        if Path(normalized_dep).name == file_path.name:
+        # Match by filename component (last part of path)
+        dep_filename = Path(normalized_dep).name
+        if dep_filename and dep_filename == file_path.name:
             return True
 
     return False
-

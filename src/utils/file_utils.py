@@ -61,7 +61,11 @@ def get_file_extension(file_path: str | Path) -> str:
 
 def is_code_file(file_path: str | Path) -> bool:
     """Check if a file is a recognized code file."""
-    return get_file_extension(file_path) in CODE_EXTENSIONS
+    path = Path(file_path)
+    # Ignore Mac OS metadata files
+    if path.name.startswith("._"):
+        return False
+    return get_file_extension(path) in CODE_EXTENSIONS
 
 
 def extract_zip(
@@ -88,6 +92,10 @@ def extract_zip(
         for file_info in zip_ref.infolist():
             # Skip directories
             if file_info.is_dir():
+                continue
+
+            # Skip Mac OS metadata files and directories
+            if "__MACOSX" in file_info.filename or Path(file_info.filename).name.startswith("._"):
                 continue
 
             # Apply extension filter if provided

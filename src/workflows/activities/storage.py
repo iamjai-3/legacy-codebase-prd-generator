@@ -23,17 +23,27 @@ async def store_vectors_activity(
     jira_data: dict[str, Any] | None = None,
     existing_prd_data: dict[str, Any] | None = None,
     recreate_collection: bool = False,
+    extract_dir: str | None = None,
 ) -> dict[str, Any]:
     """
     Store all extracted data as vectors in Qdrant.
-    
+
     This creates a unified knowledge base containing:
     - Legacy code (for understanding existing implementation)
     - Screenshots (for UI context)
     - Jira issues (for requirements context)
     - Existing PRD documents (for business logic and app flow context)
-    
+
     This combined knowledge base is used for migration purposes.
+
+    Args:
+        form_name: Form identifier
+        code_data: Code extraction metadata (files list with paths)
+        screenshot_data: Screenshot data
+        jira_data: Jira issue data
+        existing_prd_data: Existing PRD documents
+        recreate_collection: Whether to recreate the collection
+        extract_dir: Directory where files were extracted (to read actual content)
     """
     logger.info("Starting vector storage", form_name=form_name)
 
@@ -42,14 +52,70 @@ async def store_vectors_activity(
     total_vectors = 0
 
     # Store code vectors (legacy code knowledge)
-    if code_data:
+    # Re-read files from extract_dir to get actual content (avoids passing large data through Temporal)
+    if code_data and extract_dir:
+        from pathlib import Path
+
+        from src.utils.file_utils import read_file_content
+
+        extract_path = Path(extract_dir)
+        files_stored = 0
+
+        for file_info in code_data.get("files", []):
+            file_path_str = file_info.get("path", "")
+            if not file_path_str:
+                continue
+
+            # Try to find the file in the extract directory
+            # Handle both relative paths and paths with ZIP root prefix
+            possible_paths = [
+                extract_path / file_path_str,
+                extract_path / "oases-master" / file_path_str,
+                extract_path / "java" / file_path_str,
+            ]
+
+            file_path = None
+            for pp in possible_paths:
+                if pp.exists() and pp.is_file():
+                    file_path = pp
+                    break
+
+            if not file_path:
+                logger.warning(f"File not found in extract directory: {file_path_str}")
+                continue
+
+            try:
+                # Read actual file content
+                content = read_file_content(file_path)
+                file_info_with_content = file_info.copy()
+                file_info_with_content["content"] = content
+
+                # Format for vector storage
+                formatted_content = _format_code_for_vector(file_info_with_content)
+
+                count = qdrant.add_text(
+                    form_name=form_name,
+                    text=formatted_content,
+                    metadata=file_info,
+                    doc_type="code",
+                )
+                total_vectors += count
+                files_stored += 1
+            except Exception as e:
+                logger.warning(f"Failed to read/store file {file_path_str}: {e}")
+                continue
+
+        logger.info(f"Stored {files_stored} code files with content")
+    elif code_data:
+        # Fallback: use metadata only (limited context)
+        logger.warning("No extract_dir provided, storing code metadata only (limited context)")
         for file_info in code_data.get("files", []):
             content = _format_code_for_vector(file_info)
             count = qdrant.add_text(
                 form_name=form_name, text=content, metadata=file_info, doc_type="code"
             )
             total_vectors += count
-        logger.info(f"Stored {len(code_data.get('files', []))} code files")
+        logger.info(f"Stored {len(code_data.get('files', []))} code files (metadata only)")
 
     # Store screenshot vectors
     if screenshot_data:
@@ -92,7 +158,7 @@ def _store_existing_prd_vectors(
 ) -> int:
     """
     Store existing PRD documents in vector store.
-    
+
     These documents contain critical business logic, requirements, and app flow
     information that's essential for the migration knowledge base.
     """
@@ -116,7 +182,7 @@ Content:
             "form_name": form_name,
             "source": "existing_prd",
         }
-        
+
         count += qdrant.add_text(
             form_name=form_name,
             text=content,
@@ -140,7 +206,7 @@ It shows: {img.get("description", "UI screenshot or diagram")}
             "form_name": form_name,
             "source": "existing_prd_image",
         }
-        
+
         count += qdrant.add_text(
             form_name=form_name,
             text=content,
@@ -152,14 +218,51 @@ It shows: {img.get("description", "UI screenshot or diagram")}
 
 
 def _format_code_for_vector(file_info: dict[str, Any]) -> str:
-    """Format code file info for vectorization."""
-    return f"""
-File: {file_info.get("path", "")}
-Language: {file_info.get("language", "")}
-Type: {file_info.get("file_type", "")}
-Classes: {", ".join(file_info.get("classes", []))}
-Methods: {", ".join(file_info.get("methods", []))}
-"""
+    """Format code file info for vectorization with FULL content for searchability.
+
+    This is critical for the knowledge base to contain actual code content,
+    not just metadata. The semantic search needs the actual implementation.
+    """
+    path = file_info.get("path", "")
+    language = file_info.get("language", "")
+    file_type = file_info.get("file_type", "")
+    content = file_info.get("content", "")
+
+    # Build a comprehensive searchable document
+    parts = [
+        f"File: {path}",
+        f"Language: {language}",
+        f"Type: {file_type}",
+    ]
+
+    if file_info.get("classes"):
+        parts.append(f"Classes: {', '.join(file_info.get('classes', []))}")
+
+    if file_info.get("methods"):
+        parts.append(f"Methods: {', '.join(file_info.get('methods', []))}")
+
+    # For SQL DDL files, include FULL content (critical for table extraction)
+    if language == "sql" or file_type in ["ddl", "dml", "query"]:
+        parts.append(f"\nSQL DDL Content:\n{content}")
+
+    # For Java option files (form code), include significant portions
+    elif language == "java" and ("options" in path.lower() or file_type == "source"):
+        # Include more content for key source files
+        parts.append(f"\nJava Source Code:\n{content[:8000]}")  # First 8000 chars
+
+    # For other Java files, include full content but with size limit
+    elif language == "java":
+        parts.append(f"\nCode:\n{content[:4000]}")  # First 4000 chars
+
+    # For form definition files, include full content
+    elif file_type == "form_definition":
+        parts.append(f"\nForm Definition:\n{content}")
+
+    # For other files, include a reasonable portion
+    else:
+        parts.append(f"\nContent:\n{content[:3000]}")
+
+    return "\n".join(parts)
 
 
 def _format_screenshot_for_vector(

@@ -14,6 +14,11 @@ from src.extractors.code_extractor import CodeFile
 from src.prompts.requirements import RequirementsPrompts
 from src.utils.logging_config import ExecutionTimer
 from src.utils.serialization import extract_json_array
+from src.utils.sql_parser import (
+    SQLDDLParser,
+    extract_table_references_from_java,
+    parse_sql_files,
+)
 
 
 @dataclass
@@ -271,8 +276,8 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
                 context, code_files, kb_contexts
             )
 
-            # Extract source tables from existing PRD documentation
-            source_tables = await self._extract_source_tables(context, kb_contexts)
+            # Extract source tables from SQL files AND existing PRD documentation
+            source_tables = await self._extract_source_tables(context, kb_contexts, code_files)
 
             # Extract database mappings from code
             database_mappings = await self._extract_database_mappings(
@@ -333,25 +338,32 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             return self.create_error_result(e, timer)
 
     def _retrieve_comprehensive_context(self, form_name: str) -> dict[str, list[str]]:
-        """Retrieve multiple types of context from the knowledge base."""
+        """Retrieve multiple types of context from the knowledge base.
+
+        Uses targeted queries for legacy Java Swing/COBOL applications.
+        """
         contexts = {}
 
-        # Query for different aspects of the system
+        # Targeted queries for legacy Java desktop applications
         queries = {
-            "business_logic": "business logic validation rules calculations workflow",
-            "api_endpoints": "API endpoint service controller HTTP request response",
-            "database": "database table column SQL query insert update select",
-            "integration": "integration external system API client service call",
-            "validation": "validation validate required field error message",
-            "workflow": "workflow state transition approval process status",
-            "existing_prd": "PRD requirements specification description functionality",
-            "source_tables": "source table schema column primary key foreign key constraint data type",
-            "database_mapping": "entity mapping field column annotation relationship join query",
+            # Code-specific queries
+            "business_logic": f"{form_name} class method if else switch save action business logic",
+            "api_endpoints": f"{form_name} service method public void return parameter",
+            "database": "CREATE TABLE FLEET CHAPTER column VARCHAR NUMBER CHAR sql ddl",
+            "integration": f"{form_name} cobol paras send csBlock Oracle GROracleMaster",
+            "validation": f"{form_name} validate check required enabled setEnabled error",
+            "workflow": f"{form_name} state status save cancel reset action button click",
+            # Documentation queries
+            "existing_prd": f"{form_name} SourceTables Description Prompt Requirements",
+            "source_tables": "CHAPTER_ALERT_RATES FLEET_CHAPTER CHAPTERS FLEET column schema",
+            "database_mapping": f"{form_name} table column field setData getData combo dropdown",
+            # UI-specific queries
+            "ui_components": f"{form_name} JPanel JButton JTable combo dropdown form field",
         }
 
         for key, query in queries.items():
             try:
-                results = self.retrieve_context(form_name, query, limit=8)
+                results = self.retrieve_context(form_name, query, limit=10)
                 contexts[key] = results
                 self.logger.debug(f"Retrieved {len(results)} contexts for {key}")
             except Exception as e:
@@ -613,33 +625,95 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         self,
         context: AgentContext,
         kb_contexts: dict[str, list[str]],
+        code_files: list[CodeFile] | None = None,
     ) -> list[SourceTable]:
-        """Extract source table definitions from knowledge base."""
-        # Combine source table context from multiple queries
+        """Extract source table definitions from SQL files and knowledge base.
+
+        This method prioritizes ACTUAL SQL DDL from code files over LLM-generated content.
+        """
+        source_tables: list[SourceTable] = []
+
+        # PRIORITY 1: Parse actual SQL DDL files from code
+        if code_files:
+            parsed_tables = parse_sql_files(code_files)
+            self.logger.info(
+                f"Parsed {len(parsed_tables)} tables from SQL files",
+                form_name=context.form_name,
+            )
+
+            for pt in parsed_tables:
+                columns = [
+                    {
+                        "column_name": col.name,
+                        "data_type": col.data_type,
+                        "constraints": col.constraints,
+                        "is_primary_key": col.is_primary_key,
+                        "is_not_null": col.is_not_null,
+                    }
+                    for col in pt.columns
+                ]
+
+                foreign_keys = [
+                    {
+                        "columns": fk.columns,
+                        "references_table": fk.references_table,
+                        "references_columns": fk.references_columns,
+                        "on_delete": fk.on_delete,
+                    }
+                    for fk in pt.foreign_keys
+                ]
+
+                source_tables.append(
+                    SourceTable(
+                        table_name=pt.table_name,
+                        description=f"Table from {pt.source_file}",
+                        table_type="primary" if pt.primary_key else "supporting",
+                        columns=columns,
+                        primary_key=pt.primary_key,
+                        foreign_keys=foreign_keys,
+                        indexes=[
+                            {"name": idx.name, "columns": idx.columns, "unique": idx.is_unique}
+                            for idx in pt.indexes
+                        ],
+                        stored_procedures=[],
+                    )
+                )
+
+        # PRIORITY 2: Extract table references from existing PRD documentation
         kb_context = self.format_context_for_prompt(
-            kb_contexts.get("source_tables", [])
-            + kb_contexts.get("database", [])
-            + kb_contexts.get("existing_prd", []),
+            kb_contexts.get("source_tables", []) + kb_contexts.get("existing_prd", []),
             max_contexts=10,
         )
 
-        prompt = RequirementsPrompts.source_tables_extraction(context.form_name, kb_context)
+        if kb_context.strip() and "SourceTables" in kb_context:
+            # Only use LLM if we have actual PRD documentation with table info
+            prompt = RequirementsPrompts.source_tables_extraction(context.form_name, kb_context)
+            data = extract_json_array(await self.invoke_llm(context, prompt))
 
-        data = extract_json_array(await self.invoke_llm(context, prompt))
+            # Add tables from PRD docs that weren't found in SQL files
+            existing_names = {t.table_name.upper() for t in source_tables}
+            for r in data:
+                table_name = r.get("table_name", "")
+                if table_name.upper() not in existing_names:
+                    source_tables.append(
+                        SourceTable(
+                            table_name=table_name,
+                            description=r.get("description", ""),
+                            table_type=r.get("table_type", "supporting"),
+                            columns=r.get("columns", []),
+                            primary_key=r.get("primary_key", []),
+                            foreign_keys=r.get("foreign_keys", []),
+                            indexes=r.get("indexes", []),
+                            stored_procedures=r.get("stored_procedures", []),
+                        )
+                    )
 
-        return [
-            SourceTable(
-                table_name=r.get("table_name", ""),
-                description=r.get("description", ""),
-                table_type=r.get("table_type", "primary"),
-                columns=r.get("columns", []),
-                primary_key=r.get("primary_key", []),
-                foreign_keys=r.get("foreign_keys", []),
-                indexes=r.get("indexes", []),
-                stored_procedures=r.get("stored_procedures", []),
-            )
-            for r in data
-        ]
+        self.logger.info(
+            f"Total source tables extracted: {len(source_tables)}",
+            form_name=context.form_name,
+        )
+
+        return source_tables
 
     async def _extract_database_mappings(
         self,
@@ -647,27 +721,113 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         code_files: list[CodeFile] | None,
         kb_contexts: dict[str, list[str]],
     ) -> list[DatabaseMapping]:
-        """Extract entity-to-table mappings from code."""
-        model_code = self._get_model_code(code_files)
-        kb_context = self.format_context_for_prompt(
-            kb_contexts.get("database_mapping", []) + kb_contexts.get("database", []),
-            max_contexts=8,
-        )
+        """Extract entity-to-table mappings from code.
 
-        prompt = RequirementsPrompts.database_mappings(context.form_name, model_code, kb_context)
+        Uses SQL parser to extract ACTUAL table references from Java code.
+        """
+        mappings: list[DatabaseMapping] = []
 
-        data = extract_json_array(await self.invoke_llm(context, prompt))
+        # PRIORITY 1: Extract actual table/column references from Java code
+        if code_files:
+            java_refs = extract_table_references_from_java(code_files)
 
-        return [
-            DatabaseMapping(
-                entity_class=r.get("entity_class", ""),
-                table_name=r.get("table_name", ""),
-                field_mappings=r.get("field_mappings", []),
-                relationships=r.get("relationships", []),
-                queries=r.get("queries", []),
+            self.logger.info(
+                f"Extracted {len(java_refs['tables'])} table refs, "
+                f"{len(java_refs['columns'])} field codes from Java",
+                form_name=context.form_name,
             )
-            for r in data
-        ]
+
+            # Group by main Java files (options files)
+            main_files = [cf for cf in code_files if cf.file_type in ["source", "form_definition"]]
+
+            for cf in main_files:
+                if cf.language != "java":
+                    continue
+
+                # Extract references from this specific file
+                parser = SQLDDLParser()
+                file_refs = parser.parse_java_code_for_tables(cf.content)
+
+                if file_refs["tables"] or file_refs["columns"]:
+                    # Build field mappings from extracted field codes
+                    field_mappings = []
+                    for col in file_refs["columns"]:
+                        field_mappings.append(
+                            {
+                                "java_field": col,
+                                "java_type": "String",  # Default, would need annotation parsing
+                                "column_name": col,
+                                "column_type": "VARCHAR2",  # Default
+                                "annotations": [],
+                                "validation": "",
+                            }
+                        )
+
+                    # Build queries from extracted SQL
+                    queries = []
+                    for sql in file_refs["sql_queries"]:
+                        query_type = "SELECT"
+                        if "INSERT" in sql.upper():
+                            query_type = "INSERT"
+                        elif "UPDATE" in sql.upper():
+                            query_type = "UPDATE"
+                        elif "DELETE" in sql.upper():
+                            query_type = "DELETE"
+
+                        queries.append(
+                            {
+                                "name": f"{query_type.lower()}Query",
+                                "type": query_type,
+                                "sql_or_jpql": sql[:200],  # Truncate long queries
+                                "purpose": f"Extracted from {cf.path}",
+                            }
+                        )
+
+                    if field_mappings or queries:
+                        mappings.append(
+                            DatabaseMapping(
+                                entity_class=(
+                                    cf.classes[0]
+                                    if cf.classes
+                                    else cf.path.split("/")[-1].replace(".java", "")
+                                ),
+                                table_name=(
+                                    ", ".join(file_refs["tables"]) if file_refs["tables"] else "N/A"
+                                ),
+                                field_mappings=field_mappings,
+                                relationships=[],
+                                queries=queries,
+                            )
+                        )
+
+        # PRIORITY 2: Use LLM only if we have good context and few mappings
+        if len(mappings) < 2:
+            model_code = self._get_model_code(code_files)
+            kb_context = self.format_context_for_prompt(
+                kb_contexts.get("database_mapping", []) + kb_contexts.get("database", []),
+                max_contexts=8,
+            )
+
+            if model_code != self.NO_CODE_AVAILABLE:
+                prompt = RequirementsPrompts.database_mappings(
+                    context.form_name, model_code, kb_context
+                )
+                data = extract_json_array(await self.invoke_llm(context, prompt))
+
+                # Only add LLM-generated mappings that reference actual code
+                for r in data:
+                    if r.get("entity_class") and r.get("table_name"):
+                        mappings.append(
+                            DatabaseMapping(
+                                entity_class=r.get("entity_class", ""),
+                                table_name=r.get("table_name", ""),
+                                field_mappings=r.get("field_mappings", []),
+                                relationships=r.get("relationships", []),
+                                queries=r.get("queries", []),
+                            )
+                        )
+
+        return mappings
 
     def _get_model_code(self, code_files: list[CodeFile] | None) -> str:
         """Get model/entity layer code for database mapping extraction."""

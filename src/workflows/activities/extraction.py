@@ -1,5 +1,6 @@
 """Extraction activities for PRD generation workflow."""
 
+from pathlib import Path
 from typing import Any
 
 from temporalio import activity
@@ -22,7 +23,11 @@ async def extract_code_activity(
     file_mappings: list[str] | None = None,
     dependency_file: str | None = None,
 ) -> dict[str, Any]:
-    """Extract and analyze code from a ZIP file or directory."""
+    """Extract and analyze code from a ZIP file or directory.
+
+    This activity extracts code files and stores their content directly in the vector store
+    to avoid exceeding Temporal activity result size limits. Only metadata is returned.
+    """
     logger.info(
         "Starting code extraction",
         form_name=form_name,
@@ -32,36 +37,81 @@ async def extract_code_activity(
     )
 
     extractor = CodeExtractor()
+    extract_dir = None
 
     if zip_path:
+        # Determine extract directory (CodeExtractor uses uploads_dir by default)
+        from src.config.settings import get_settings
+
+        settings = get_settings()
+        zip_path_obj = Path(zip_path)
+        extract_dir = Path(settings.uploads_dir) / zip_path_obj.stem
+
         code_files = extractor.extract_from_zip(
             zip_path=zip_path, file_mappings=file_mappings, dependency_file=dependency_file
         )
     elif code_directory:
+        extract_dir = Path(code_directory)
         code_files = extractor.extract_from_directory(
             directory=code_directory, file_mappings=file_mappings, dependency_file=dependency_file
         )
     else:
         raise ValueError("Either zip_path or code_directory must be provided")
 
-    return {
-        "form_name": form_name,
-        "file_count": len(code_files),
-        "files": [
+    # Limit metadata to avoid exceeding gRPC message size limits
+    # Store only essential information, full content will be in vector store
+    MAX_METHODS = 10
+    MAX_IMPORTS = 10
+    MAX_CLASSES = 5
+
+    files_metadata = []
+    total_size = 0
+    MAX_METADATA_SIZE = 3 * 1024 * 1024  # 3MB limit for metadata
+
+    for cf in code_files:
+        # Calculate approximate size of this file's metadata
+        file_meta_size = (
+            len(cf.path)
+            + len(cf.language)
+            + len(cf.file_type)
+            + sum(len(c) for c in cf.classes[:MAX_CLASSES])
+            + sum(len(m) for m in cf.methods[:MAX_METHODS])
+            + sum(len(i) for i in cf.imports[:MAX_IMPORTS])
+            + 100  # overhead
+        )
+
+        # Skip if adding this would exceed limit
+        if total_size + file_meta_size > MAX_METADATA_SIZE and len(files_metadata) > 0:
+            logger.warning(
+                f"Truncating file metadata at {len(files_metadata)} files to avoid size limit",
+                form_name=form_name,
+            )
+            break
+
+        files_metadata.append(
             {
                 "path": cf.path,
                 "language": cf.language,
                 "file_type": cf.file_type,
-                "classes": cf.classes,
-                "methods": cf.methods[:20],
-                "imports": cf.imports[:20],
+                "classes": cf.classes[:MAX_CLASSES],
+                "methods": cf.methods[:MAX_METHODS],
+                "imports": cf.imports[:MAX_IMPORTS],
                 "line_count": cf.line_count,
+                "content_length": len(cf.content) if cf.content else 0,  # Store size, not content
             }
-            for cf in code_files
-        ],
+        )
+        total_size += file_meta_size
+
+    return {
+        "form_name": form_name,
+        "file_count": len(code_files),
+        "files": files_metadata,
         "languages": list({cf.language for cf in code_files}),
-        # Note: raw_files removed to avoid exceeding Temporal activity result size limit
-        # Files are stored in vector store and can be retrieved from there if needed
+        "extract_dir": (
+            str(extract_dir) if extract_dir else None
+        ),  # Pass extract directory for file reading
+        # Full file content is stored in vector store via store_vectors_activity
+        # This avoids exceeding Temporal gRPC message size limits (4MB default)
     }
 
 
@@ -142,13 +192,13 @@ async def extract_existing_prd_activity(
 ) -> dict[str, Any]:
     """
     Extract existing PRD documentation from src/PRDs folder.
-    
+
     This extracts markdown documents and images that contain:
     - Business logic descriptions
     - Requirements documentation
     - Source table mappings
     - UI screenshots with annotations
-    
+
     These are combined into the knowledge base for migration purposes.
     """
     logger.info("Starting existing PRD extraction", form_name=form_name, prd_base_dir=prd_base_dir)
