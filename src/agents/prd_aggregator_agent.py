@@ -1,5 +1,13 @@
 """
-PRD Aggregator Agent for combining all agent outputs into a final PRD document.
+PRD Aggregator Agent for combining all agent outputs into a migration-ready PRD document.
+
+Generates comprehensive PRD with:
+- Specific business logic from legacy code
+- Complete API specifications
+- Detailed data models with schemas
+- Validation rules and error handling
+- Integration specifications
+- Workflow documentation
 """
 
 from dataclasses import dataclass, field
@@ -9,7 +17,6 @@ from typing import Any
 from src.agents.atlassian_integration_agent import AtlassianIntegrationResult
 from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
 from src.agents.requirements_generator_agent import RequirementsGeneratorResult
-from src.agents.risk_analysis_agent import RiskAnalysisResult
 from src.agents.screenshot_analysis_agent import ScreenshotAnalysisResult
 from src.agents.user_flow_agent import UserFlowResult
 from src.prompts.prd_aggregator import PRDAggregatorPrompts
@@ -19,7 +26,7 @@ from src.utils.logging_config import ExecutionTimer
 @dataclass
 class PRDSection:
     """A section of the PRD document."""
-    
+
     title: str
     content: str
     order: int
@@ -29,7 +36,7 @@ class PRDSection:
 @dataclass
 class PRDDocument:
     """Complete PRD document."""
-    
+
     form_name: str
     title: str
     version: str
@@ -44,7 +51,7 @@ class PRDDocument:
 @dataclass
 class PRDAggregatorResult:
     """Result from PRD aggregation."""
-    
+
     form_name: str
     prd_document: PRDDocument
     markdown_content: str
@@ -55,18 +62,21 @@ class PRDAggregatorResult:
 
 class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
     """
-    Agent for aggregating all analysis results into a comprehensive PRD document.
-    Combines outputs from all specialized agents into a cohesive document.
+    Agent for aggregating all analysis results into a comprehensive,
+    migration-ready PRD document.
+
+    This agent queries the knowledge base for additional context and
+    generates PRDs with specific business logic, APIs, and technical details.
     """
-    
+
     def __init__(self) -> None:
         """Initialize the PRD aggregator agent."""
         super().__init__("PRDAggregatorAgent")
-    
+
     def get_system_prompt(self, context: AgentContext) -> str:
         """Get the system prompt for PRD aggregation."""
         return PRDAggregatorPrompts.system_prompt(context.form_name)
-    
+
     async def analyze(
         self,
         context: AgentContext,
@@ -74,27 +84,25 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         atlassian_analysis: AtlassianIntegrationResult | None = None,
         requirements_analysis: RequirementsGeneratorResult | None = None,
         user_flow_analysis: UserFlowResult | None = None,
-        risk_analysis: RiskAnalysisResult | None = None,
         **kwargs: Any,
     ) -> AgentResult[PRDAggregatorResult]:
         """
-        Aggregate all agent results into a PRD document.
-        
+        Aggregate all agent results into a migration-ready PRD document.
+
         Args:
             context: Agent execution context
             screenshot_analysis: Results from screenshot analysis
             atlassian_analysis: Results from Atlassian integration
             requirements_analysis: Results from requirements generation
             user_flow_analysis: Results from user flow analysis
-            risk_analysis: Results from risk analysis
-            
+
         Returns:
             AgentResult with PRDAggregatorResult
         """
         timer = ExecutionTimer()
 
         self.logger.info(
-            "Starting PRD aggregation",
+            "Starting migration-focused PRD aggregation",
             form_name=context.form_name,
             has_screenshots=screenshot_analysis is not None,
             has_jira=atlassian_analysis is not None,
@@ -102,24 +110,29 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         )
 
         try:
-            # Generate all PRD sections
+            # Retrieve additional context from knowledge base
+            kb_contexts = self._retrieve_kb_context(context.form_name)
+
+            # Generate all PRD sections with enhanced content
             sections = await self._build_all_sections(
                 context,
                 screenshot_analysis,
                 atlassian_analysis,
                 requirements_analysis,
                 user_flow_analysis,
-                risk_analysis,
+                kb_contexts,
             )
-            
-            # Generate executive summary and appendices
+
+            # Generate executive summary with metrics
             executive_summary = await self._generate_executive_summary(
-                context, requirements_analysis, risk_analysis
+                context, requirements_analysis, kb_contexts
             )
+
+            # Generate appendices with code references
             appendices = self._generate_appendices(
                 screenshot_analysis, requirements_analysis, user_flow_analysis
             )
-            
+
             # Create PRD document
             prd_document = self._create_prd_document(
                 context,
@@ -130,10 +143,10 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 atlassian_analysis,
                 requirements_analysis,
             )
-            
+
             # Generate markdown content
             markdown_content = self._generate_markdown(prd_document)
-            
+
             result = PRDAggregatorResult(
                 form_name=context.form_name,
                 prd_document=prd_document,
@@ -144,21 +157,49 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                     "execution_time_ms": timer.elapsed_ms(),
                     "sections_generated": len(sections),
                     "appendices_count": len(appendices),
+                    "has_api_specs": requirements_analysis is not None
+                    and len(requirements_analysis.api_specifications) > 0,
+                    "has_business_logic": requirements_analysis is not None
+                    and len(requirements_analysis.business_logic) > 0,
                 },
             )
-            
+
             self.logger.info(
-                "PRD generation complete",
+                "Migration-focused PRD generation complete",
                 form_name=context.form_name,
                 sections=len(sections),
                 word_count=result.word_count,
                 duration_ms=timer.elapsed_ms(),
             )
-            
+
             return self.create_success_result(result, timer)
-            
+
         except Exception as e:
             return self.create_error_result(e, timer)
+
+    def _retrieve_kb_context(self, form_name: str) -> dict[str, list[str]]:
+        """Retrieve context from knowledge base for PRD enhancement."""
+        contexts = {}
+
+        queries = {
+            "overview": "module purpose functionality description features overview",
+            "business_logic": "business logic rules calculation workflow process",
+            "api": "API endpoint service controller method request response",
+            "data": "database table entity field column relationship schema",
+            "validation": "validation rule required constraint check error",
+            "integration": "integration external system API connection service",
+            "existing_prd": "PRD requirements specification documentation",
+        }
+
+        for key, query in queries.items():
+            try:
+                results = self.retrieve_context(form_name, query, limit=5)
+                contexts[key] = results
+            except Exception as e:
+                self.logger.warning(f"Failed to retrieve {key} context: {e}")
+                contexts[key] = []
+
+        return contexts
 
     async def _build_all_sections(
         self,
@@ -167,36 +208,117 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         atlassian_analysis: AtlassianIntegrationResult | None,
         requirements_analysis: RequirementsGeneratorResult | None,
         user_flow_analysis: UserFlowResult | None,
-        risk_analysis: RiskAnalysisResult | None,
+        kb_contexts: dict[str, list[str]],
     ) -> list[PRDSection]:
-        """Build all PRD sections from analysis results."""
+        """Build all PRD sections with enhanced migration-focused content."""
         sections: list[PRDSection] = []
+        section_order = 1
 
-        # Always include overview
-        sections.append(await self._generate_overview_section(context, atlassian_analysis))
+        # 1. Overview section (always included)
+        sections.append(
+            await self._generate_overview_section(
+                context, atlassian_analysis, kb_contexts, section_order
+            )
+        )
+        section_order += 1
 
-        # Conditional sections based on available analysis
+        # 2. User Interface section (if screenshots available)
         if screenshot_analysis:
-            sections.append(await self._generate_ui_section(context, screenshot_analysis))
+            sections.append(
+                await self._generate_ui_section(context, screenshot_analysis, section_order)
+            )
+            section_order += 1
 
+        # 3-8. Requirements-based sections
         if requirements_analysis:
-            sections.append(
-                await self._generate_functional_requirements_section(context, requirements_analysis)
-            )
-            sections.append(await self._generate_nfr_section(context, requirements_analysis))
-            sections.append(await self._generate_data_model_section(context, requirements_analysis))
-            sections.append(
-                await self._generate_business_rules_section(context, requirements_analysis)
-            )
+            # 3. Business Logic section (NEW)
+            if requirements_analysis.business_logic:
+                sections.append(
+                    await self._generate_business_logic_section(
+                        context, requirements_analysis, kb_contexts, section_order
+                    )
+                )
+                section_order += 1
 
+            # 4. API Specification section (NEW)
+            if requirements_analysis.api_specifications:
+                sections.append(
+                    await self._generate_api_section(
+                        context, requirements_analysis, kb_contexts, section_order
+                    )
+                )
+                section_order += 1
+
+            # 5. Functional Requirements section
+            sections.append(
+                await self._generate_functional_requirements_section(
+                    context, requirements_analysis, kb_contexts, section_order
+                )
+            )
+            section_order += 1
+
+            # 6. Data Model section
+            sections.append(
+                await self._generate_data_model_section(
+                    context, requirements_analysis, kb_contexts, section_order
+                )
+            )
+            section_order += 1
+
+            # 7. Validation Rules section (NEW)
+            if requirements_analysis.validation_rules:
+                sections.append(
+                    await self._generate_validation_section(
+                        context, requirements_analysis, section_order
+                    )
+                )
+                section_order += 1
+
+            # 8. Integration Requirements section (NEW)
+            if requirements_analysis.integration_requirements:
+                sections.append(
+                    await self._generate_integration_section(
+                        context, requirements_analysis, section_order
+                    )
+                )
+                section_order += 1
+
+            # 9. Non-Functional Requirements
+            sections.append(
+                await self._generate_nfr_section(context, requirements_analysis, section_order)
+            )
+            section_order += 1
+
+            # 10. Business Rules section
+            sections.append(
+                await self._generate_business_rules_section(
+                    context, requirements_analysis, section_order
+                )
+            )
+            section_order += 1
+
+        # 11. User Flows section (if available)
         if user_flow_analysis:
-            sections.append(await self._generate_user_flow_section(context, user_flow_analysis))
+            sections.append(
+                await self._generate_user_flow_section(context, user_flow_analysis, section_order)
+            )
+            section_order += 1
 
-        if risk_analysis:
-            sections.append(await self._generate_risk_section(context, risk_analysis))
+            # 12. Workflow specifications (NEW - from requirements)
+            if requirements_analysis and requirements_analysis.workflow_specs:
+                sections.append(
+                    await self._generate_workflow_section(
+                        context, requirements_analysis, section_order
+                    )
+                )
+                section_order += 1
 
-        # Always include migration strategy
-        sections.append(await self._generate_migration_section(context, risk_analysis))
+        # 13. Migration Strategy section (always included)
+        sections.append(
+            await self._generate_migration_section(
+                context, requirements_analysis, kb_contexts, section_order
+            )
+        )
 
         return sections
 
@@ -213,7 +335,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         """Create the PRD document structure."""
         return PRDDocument(
             form_name=context.form_name,
-            title=f"Product Requirements Document: {context.form_name.upper()} Module Migration",
+            title=f"Migration PRD: {context.form_name.upper()} Module",
             version="1.0.0",
             created_date=datetime.now().isoformat(),
             author="PRD Agent",
@@ -222,53 +344,84 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             appendices=appendices,
             metadata={
                 "generation_timestamp": datetime.now().isoformat(),
-                "agent_version": "1.0.0",
+                "agent_version": "2.0.0",
+                "prd_type": "migration",
                 "sources": {
                     "screenshots": screenshot_analysis is not None,
                     "jira": atlassian_analysis is not None,
                     "code": requirements_analysis is not None,
                 },
+                "statistics": {
+                    "functional_requirements": (
+                        len(requirements_analysis.functional_requirements)
+                        if requirements_analysis
+                        else 0
+                    ),
+                    "api_endpoints": (
+                        len(requirements_analysis.api_specifications)
+                        if requirements_analysis
+                        else 0
+                    ),
+                    "data_entities": (
+                        len(requirements_analysis.data_requirements) if requirements_analysis else 0
+                    ),
+                    "business_logic_items": (
+                        len(requirements_analysis.business_logic) if requirements_analysis else 0
+                    ),
+                    "validation_rules": (
+                        len(requirements_analysis.validation_rules) if requirements_analysis else 0
+                    ),
+                    "integrations": (
+                        len(requirements_analysis.integration_requirements)
+                        if requirements_analysis
+                        else 0
+                    ),
+                },
             },
         )
 
     async def _generate_overview_section(
-        self, context: AgentContext, atlassian_analysis: AtlassianIntegrationResult | None
+        self,
+        context: AgentContext,
+        atlassian_analysis: AtlassianIntegrationResult | None,
+        kb_contexts: dict[str, list[str]],
+        order: int,
     ) -> PRDSection:
-        """Generate the overview section."""
+        """Generate the overview section with specific module details."""
         jira_context = ""
         if atlassian_analysis:
             jira_context = f"""
 Based on Jira analysis:
 - Total issues: {atlassian_analysis.total_issues}
-- Summary: {atlassian_analysis.summary[:500]}
+- Summary: {atlassian_analysis.summary[:1000]}
 """
-        
-        prompt = f"""Write the Overview section for "{context.form_name}" PRD:
 
-{jira_context}
+        kb_context = self.format_context_for_prompt(
+            kb_contexts.get("overview", []) + kb_contexts.get("existing_prd", []),
+            max_contexts=5,
+        )
 
-Include:
-1. Purpose and Scope
-2. Background
-3. Goals and Objectives
-4. Target Audience
-5. Document Conventions
-
-Write in professional technical documentation style."""
+        prompt = PRDAggregatorPrompts.overview_section(context.form_name, jira_context, kb_context)
 
         content = await self.invoke_llm(context, prompt)
-        
-        return PRDSection(title="1. Overview", content=content, order=1)
-    
+
+        return PRDSection(title=f"{order}. Overview", content=content, order=order)
+
     async def _generate_ui_section(
-        self, context: AgentContext, screenshot_analysis: ScreenshotAnalysisResult
+        self,
+        context: AgentContext,
+        screenshot_analysis: ScreenshotAnalysisResult,
+        order: int,
     ) -> PRDSection:
         """Generate the user interface section."""
         screen_summary = "\n".join(
-            [f"- {s.screen_name}: {s.purpose}" for s in screenshot_analysis.screen_analyses[:10]]
+            [
+                f"- **{s.screen_name}**: {s.purpose}"
+                for s in screenshot_analysis.screen_analyses[:10]
+            ]
         )
-        
-        content = f"""## User Interface Overview
+
+        content = f"""## User Interface Analysis
 
 ### Screens Analyzed
 {len(screenshot_analysis.screen_analyses)} screens were analyzed for the {context.form_name} module.
@@ -280,7 +433,7 @@ Write in professional technical documentation style."""
 """
         for component, count in screenshot_analysis.component_inventory.items():
             content += f"- **{component}**: {count} instances\n"
-        
+
         content += f"""
 ### Common UI Patterns
 {chr(10).join(["- " + p for p in screenshot_analysis.common_patterns])}
@@ -291,102 +444,457 @@ Write in professional technical documentation style."""
 ### Modernization Recommendations
 {chr(10).join(["- " + r for r in screenshot_analysis.recommendations])}
 """
-        
-        return PRDSection(title="2. User Interface", content=content, order=2)
-    
-    async def _generate_functional_requirements_section(
-        self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
+
+        return PRDSection(title=f"{order}. User Interface", content=content, order=order)
+
+    async def _generate_business_logic_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        kb_contexts: dict[str, list[str]],
+        order: int,
     ) -> PRDSection:
-        """Generate the functional requirements section."""
+        """Generate the business logic documentation section."""
+        content = """## Business Logic Specifications
+
+This section documents the exact business logic extracted from the legacy code.
+Each item includes trigger conditions, processing steps, and expected outputs.
+
+### Business Logic Inventory
+"""
+        for bl in requirements_analysis.business_logic:
+            content += f"""
+#### {bl.logic_id}: {bl.name}
+**Type:** {bl.logic_type}
+
+**Description:** {bl.description}
+
+**Trigger:** {bl.trigger}
+
+**Inputs:**
+"""
+            for inp in bl.inputs:
+                content += f"- `{inp.get('name', 'N/A')}` ({inp.get('type', 'unknown')}): {inp.get('source', 'N/A')}\n"
+
+            content += "\n**Processing Steps:**\n"
+            for i, step in enumerate(bl.steps, 1):
+                content += f"{i}. {step}\n"
+
+            if bl.conditions:
+                content += "\n**Conditional Logic:**\n"
+                for cond in bl.conditions:
+                    content += f"- IF `{cond.get('condition', '')}` THEN {cond.get('true_action', '')} ELSE {cond.get('false_action', '')}\n"
+
+            content += "\n**Outputs:**\n"
+            for out in bl.outputs:
+                content += f"- `{out.get('name', 'N/A')}` ({out.get('type', 'unknown')}): {out.get('destination', 'N/A')}\n"
+
+            if bl.source_location:
+                content += f"\n**Source Reference:** `{bl.source_location}`\n"
+
+            content += "\n---\n"
+
+        return PRDSection(title=f"{order}. Business Logic", content=content, order=order)
+
+    async def _generate_api_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        kb_contexts: dict[str, list[str]],
+        order: int,
+    ) -> PRDSection:
+        """Generate the API specification section."""
+        content = """## API Specifications
+
+Complete API specifications for the module. Each endpoint is documented with
+request/response schemas suitable for implementation in any framework.
+
+### API Endpoints Summary
+
+| Method | Path | Description |
+|--------|------|-------------|
+"""
+        for api in requirements_analysis.api_specifications:
+            content += f"| {api.http_method} | `{api.path}` | {api.description[:50]}... |\n"
+
+        content += "\n### Detailed API Specifications\n"
+
+        for api in requirements_analysis.api_specifications:
+            content += f"""
+#### {api.endpoint_name}
+
+**Endpoint:** `{api.http_method} {api.path}`
+
+**Description:** {api.description}
+
+**Request Specification:**
+```json
+{self._format_json_schema(api.request_spec)}
+```
+
+**Response Specification:**
+```json
+{self._format_json_schema(api.response_spec)}
+```
+
+**Business Logic:**
+{api.business_logic}
+
+**Source Reference:** `{api.source_method}`
+
+---
+"""
+
+        return PRDSection(title=f"{order}. API Specifications", content=content, order=order)
+
+    async def _generate_functional_requirements_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        kb_contexts: dict[str, list[str]],
+        order: int,
+    ) -> PRDSection:
+        """Generate the functional requirements section with detailed logic."""
         content = f"""## Functional Requirements
 
 ### Requirements Summary
 {requirements_analysis.summary}
 
-### Detailed Requirements
+### Requirements by Priority
 
+| ID | Title | Priority | Category |
+|----|-------|----------|----------|
 """
         for req in requirements_analysis.functional_requirements:
-            content += f"""#### {req.req_id}: {req.title}
+            content += f"| {req.req_id} | {req.title[:40]}... | {req.priority} | {req.category} |\n"
+
+        content += "\n### Detailed Requirements\n"
+
+        for req in requirements_analysis.functional_requirements:
+            content += f"""
+#### {req.req_id}: {req.title}
 **Priority:** {req.priority} | **Category:** {req.category}
 
 **Description:** {req.description}
+
+**Business Logic:**
+{req.business_logic if req.business_logic else "See business logic section for details."}
 
 **User Story:** {req.user_story}
 
 **Acceptance Criteria:**
 {chr(10).join(["- " + ac for ac in req.acceptance_criteria])}
+"""
+            if req.api_specification:
+                content += f"""
+**API Contract:**
+- Endpoint: `{req.api_specification.get('method', 'GET')} {req.api_specification.get('endpoint', 'N/A')}`
+- Request: `{req.api_specification.get('request_body', {})}`
+- Response: `{req.api_specification.get('response', {})}`
+"""
+            if req.database_operations:
+                content += "\n**Database Operations:**\n"
+                for op in req.database_operations:
+                    content += f"- {op.get('operation', 'QUERY')}: `{op.get('table', 'N/A')}` ({', '.join(op.get('columns', []))})\n"
 
-**Dependencies:** {", ".join(req.dependencies) if req.dependencies else "None"}
+            if req.validation_rules:
+                content += f"\n**Validation Rules:**\n{chr(10).join(['- ' + v for v in req.validation_rules])}\n"
 
----
+            if req.calculations:
+                content += (
+                    f"\n**Calculations:**\n{chr(10).join(['- ' + c for c in req.calculations])}\n"
+                )
+
+            if req.source_files:
+                content += f"\n**Source References:** {', '.join(['`' + f + '`' for f in req.source_files])}\n"
+
+            content += f"\n**Dependencies:** {', '.join(req.dependencies) if req.dependencies else 'None'}\n"
+            content += "\n---\n"
+
+        return PRDSection(title=f"{order}. Functional Requirements", content=content, order=order)
+
+    async def _generate_data_model_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        kb_contexts: dict[str, list[str]],
+        order: int,
+    ) -> PRDSection:
+        """Generate the data model section with full schema details."""
+        content = """## Data Model
+
+### Entity Relationship Overview
 
 """
-        
-        return PRDSection(title="3. Functional Requirements", content=content, order=3)
-    
+        # Generate Mermaid ER diagram
+        if requirements_analysis.data_requirements:
+            content += "```mermaid\nerDiagram\n"
+            for entity in requirements_analysis.data_requirements[:10]:
+                entity_name = entity.entity_name.replace(" ", "_")
+                content += f"    {entity_name} {{\n"
+                for field in entity.fields[:10]:
+                    field_type = str(field.get("type", "string")).replace(" ", "_")
+                    field_name = str(field.get("name", "field")).replace(" ", "_")
+                    content += f"        {field_type} {field_name}\n"
+                content += "    }\n"
+
+            # Add relationships
+            for entity in requirements_analysis.data_requirements:
+                entity_name = entity.entity_name.replace(" ", "_")
+                for rel in entity.relationships:
+                    rel_type = rel.get("type", "ONE_TO_MANY")
+                    target = str(rel.get("target", "")).replace(" ", "_")
+                    if target:
+                        if "MANY_TO_MANY" in rel_type:
+                            content += f'    {entity_name} }}o--o{{ {target} : ""\n'
+                        elif "ONE_TO_MANY" in rel_type:
+                            content += f'    {entity_name} ||--o{{ {target} : ""\n'
+                        else:
+                            content += f'    {entity_name} }}o--|| {target} : ""\n'
+
+            content += "```\n\n"
+
+        content += "### Entity Specifications\n"
+
+        for entity in requirements_analysis.data_requirements:
+            content += f"""
+#### {entity.entity_name}
+
+**Description:** {entity.description}
+
+**Source Table:** `{entity.source_table or 'N/A'}`
+**Source Class:** `{entity.source_class or 'N/A'}`
+
+**Schema:**
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+"""
+            for field in entity.fields:
+                constraints = (
+                    ", ".join(field.get("constraints", [])) if field.get("constraints") else "—"
+                )
+                content += f"| `{field.get('name', '')}` | {field.get('type', '')} | {constraints} | {field.get('description', '')} |\n"
+
+            if entity.primary_key:
+                content += (
+                    f"\n**Primary Key:** {', '.join(['`' + k + '`' for k in entity.primary_key])}\n"
+                )
+
+            if entity.foreign_keys:
+                content += "\n**Foreign Keys:**\n"
+                for fk in entity.foreign_keys:
+                    content += (
+                        f"- `{', '.join(fk.get('columns', []))}` → {fk.get('references', 'N/A')}\n"
+                    )
+
+            if entity.indexes:
+                content += "\n**Indexes:**\n"
+                for idx in entity.indexes:
+                    unique = "UNIQUE " if idx.get("unique") else ""
+                    content += f"- `{idx.get('name', 'idx')}`: {unique}({', '.join(idx.get('columns', []))})\n"
+
+            if entity.relationships:
+                content += "\n**Relationships:**\n"
+                for rel in entity.relationships:
+                    content += f"- {rel.get('type', 'RELATED_TO')} `{rel.get('target', 'N/A')}` via `{rel.get('join_column', 'N/A')}`\n"
+
+            if entity.business_rules:
+                content += f"\n**Business Rules:**\n{chr(10).join(['- ' + r for r in entity.business_rules])}\n"
+
+            if entity.sample_queries:
+                content += "\n**Sample Queries:**\n"
+                for q in entity.sample_queries[:3]:
+                    content += (
+                        f"\n*{q.get('purpose', 'Query')}:*\n```sql\n{q.get('sql', '')}\n```\n"
+                    )
+
+            content += "\n---\n"
+
+        return PRDSection(title=f"{order}. Data Model", content=content, order=order)
+
+    async def _generate_validation_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        order: int,
+    ) -> PRDSection:
+        """Generate the validation rules section."""
+        content = """## Validation Rules
+
+All validation rules extracted from the legacy code. Each rule includes
+the exact condition and error message for implementation.
+
+### Validation Rules by Entity
+
+"""
+        # Group by entity
+        by_entity: dict[str, list] = {}
+        for rule in requirements_analysis.validation_rules:
+            entity = rule.entity or "General"
+            if entity not in by_entity:
+                by_entity[entity] = []
+            by_entity[entity].append(rule)
+
+        for entity, rules in by_entity.items():
+            content += f"#### {entity}\n\n"
+            content += "| ID | Field | Type | Condition | Error Message |\n"
+            content += "|----| ------|------|-----------|---------------|\n"
+            for rule in rules:
+                condition = (
+                    rule.condition[:40] + "..." if len(rule.condition) > 40 else rule.condition
+                )
+                msg = (
+                    rule.error_message[:30] + "..."
+                    if len(rule.error_message) > 30
+                    else rule.error_message
+                )
+                content += f"| {rule.rule_id} | `{rule.field}` | {rule.rule_type} | `{condition}` | {msg} |\n"
+            content += "\n"
+
+        content += "### Detailed Validation Specifications\n"
+
+        for rule in requirements_analysis.validation_rules:
+            content += f"""
+#### {rule.rule_id}: {rule.field}
+
+**Entity:** {rule.entity}
+**Type:** {rule.rule_type}
+**When Applied:** {rule.when_applied}
+
+**Condition:**
+```
+{rule.condition}
+```
+
+**Error Message:** {rule.error_message}
+
+**Description:** {rule.description}
+
+**Source Reference:** `{rule.source_location}`
+
+---
+"""
+
+        return PRDSection(title=f"{order}. Validation Rules", content=content, order=order)
+
+    async def _generate_integration_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        order: int,
+    ) -> PRDSection:
+        """Generate the integration requirements section."""
+        content = """## External Integrations
+
+All external system integrations required for this module.
+
+### Integration Summary
+
+| ID | System | Type | Direction | Purpose |
+|----|--------|------|-----------|---------|
+"""
+        for integ in requirements_analysis.integration_requirements:
+            content += f"| {integ.integration_id} | {integ.external_system} | {integ.integration_type} | {integ.direction} | {integ.purpose[:30]}... |\n"
+
+        content += "\n### Detailed Integration Specifications\n"
+
+        for integ in requirements_analysis.integration_requirements:
+            content += f"""
+#### {integ.integration_id}: {integ.name}
+
+**External System:** {integ.external_system}
+**Type:** {integ.integration_type}
+**Direction:** {integ.direction}
+
+**Purpose:** {integ.purpose}
+
+**Connection Specification:**
+```json
+{self._format_json_schema(integ.specification)}
+```
+
+**Data Mapping:**
+"""
+            for mapping in integ.data_mapping:
+                content += f"- `{mapping.get('source_field', 'N/A')}` → `{mapping.get('target_field', 'N/A')}`"
+                if mapping.get("transformation"):
+                    content += f" (transform: {mapping.get('transformation')})"
+                content += "\n"
+
+            if integ.error_handling:
+                content += f"""
+**Error Handling:**
+- Retry Policy: {integ.error_handling.get('retry_policy', 'N/A')}
+- Fallback: {integ.error_handling.get('fallback', 'N/A')}
+- Alerts: {integ.error_handling.get('alerts', 'N/A')}
+"""
+
+            if integ.source_files:
+                content += f"\n**Source References:** {', '.join(['`' + f + '`' for f in integ.source_files])}\n"
+
+            content += "\n---\n"
+
+        return PRDSection(title=f"{order}. External Integrations", content=content, order=order)
+
     async def _generate_nfr_section(
-        self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        order: int,
     ) -> PRDSection:
         """Generate the non-functional requirements section."""
         content = """## Non-Functional Requirements
 
 """
         for req in requirements_analysis.non_functional_requirements:
-            content += f"""### {req.req_id}: {req.category.title()}
+            content += f"""### {req.req_id}: {req.title}
+
+**Category:** {req.category} | **Priority:** {req.priority}
 
 **Description:** {req.description}
 
+**Current Implementation:** {req.current_implementation}
+
 **Metric:** {req.metric}
-
 **Target Value:** {req.target_value}
+**Measurement Method:** {req.measurement_method}
 
-**Validation Method:** {req.validation_method}
+**Migration Consideration:** {req.migration_consideration}
 
 ---
 
 """
-        
-        return PRDSection(title="4. Non-Functional Requirements", content=content, order=4)
-    
-    async def _generate_data_model_section(
-        self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
+
+        return PRDSection(
+            title=f"{order}. Non-Functional Requirements", content=content, order=order
+        )
+
+    async def _generate_business_rules_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        order: int,
     ) -> PRDSection:
-        """Generate the data model section."""
-        content = """## Data Model
+        """Generate the business rules section."""
+        content = f"""## Business Rules
 
-### Entity Overview
+### Extracted Business Rules
+{chr(10).join(["- " + r for r in requirements_analysis.business_rules])}
 
+### Assumptions
+{chr(10).join(["- " + a for a in requirements_analysis.assumptions]) if requirements_analysis.assumptions else "No assumptions documented."}
+
+### Out of Scope
+{chr(10).join(["- " + o for o in requirements_analysis.out_of_scope]) if requirements_analysis.out_of_scope else "No items explicitly out of scope."}
 """
-        for entity in requirements_analysis.data_requirements:
-            content += f"""### {entity.entity_name}
 
-**Description:** {entity.description}
+        return PRDSection(title=f"{order}. Business Rules", content=content, order=order)
 
-**Source Table:** {entity.source_table or "N/A"}
-
-**Fields:**
-| Field | Type | Required |
-|-------|------|----------|
-"""
-            for field_item in entity.fields:
-                content += f"| {field_item.get('name', '')} | {field_item.get('type', '')} | {field_item.get('required', '')} |\n"
-            
-            content += f"""
-**Relationships:**
-{chr(10).join(["- " + r for r in entity.relationships])}
-
-**Constraints:**
-{chr(10).join(["- " + c for c in entity.constraints])}
-
----
-
-"""
-        
-        return PRDSection(title="5. Data Model", content=content, order=5)
-    
     async def _generate_user_flow_section(
-        self, context: AgentContext, user_flow_analysis: UserFlowResult
+        self,
+        context: AgentContext,
+        user_flow_analysis: UserFlowResult,
+        order: int,
     ) -> PRDSection:
         """Generate the user flow section."""
         content = f"""## User Flows
@@ -429,7 +937,7 @@ Write in professional technical documentation style."""
 """
                 if step.alternative_paths:
                     content += f"- Alternatives: {', '.join(step.alternative_paths)}\n"
-            
+
             content += f"""
 **Postconditions:**
 {chr(10).join(["- " + p for p in flow.postconditions])}
@@ -439,7 +947,7 @@ Write in professional technical documentation style."""
 ---
 
 """
-        
+
         # Add flow diagram
         content += f"""### Flow Diagram
 
@@ -450,199 +958,193 @@ Write in professional technical documentation style."""
 ### Cross-Module Flows
 {chr(10).join(["- " + f for f in user_flow_analysis.cross_module_flows])}
 """
-        
-        return PRDSection(title="6. User Flows", content=content, order=6)
-    
-    async def _generate_business_rules_section(
-        self, context: AgentContext, requirements_analysis: RequirementsGeneratorResult
+
+        return PRDSection(title=f"{order}. User Flows", content=content, order=order)
+
+    async def _generate_workflow_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        order: int,
     ) -> PRDSection:
-        """Generate the business rules section."""
-        content = f"""## Business Rules
+        """Generate the workflow specifications section."""
+        content = """## Workflow Specifications
 
-### Business Rules
-{chr(10).join(["- " + r for r in requirements_analysis.business_rules])}
-
-### Validation Rules
-{chr(10).join(["- " + r for r in requirements_analysis.validation_rules])}
-
-### Assumptions
-{chr(10).join(["- " + a for a in requirements_analysis.assumptions])}
-
-### Out of Scope
-{chr(10).join(["- " + o for o in requirements_analysis.out_of_scope])}
-"""
-        
-        return PRDSection(title="7. Business Rules", content=content, order=7)
-    
-    async def _generate_risk_section(
-        self, context: AgentContext, risk_analysis: RiskAnalysisResult
-    ) -> PRDSection:
-        """Generate the risk assessment section."""
-        content = f"""## Risk Assessment
-
-### Executive Summary
-{risk_analysis.executive_summary}
-
-### Risk Matrix
-
-| Severity | Count |
-|----------|-------|
-| Critical | {risk_analysis.risk_matrix.critical_count} |
-| High | {risk_analysis.risk_matrix.high_count} |
-| Medium | {risk_analysis.risk_matrix.medium_count} |
-| Low | {risk_analysis.risk_matrix.low_count} |
-
-**Overall Risk Score:** {risk_analysis.risk_matrix.risk_score}/100
-
-### Top Risks
-{chr(10).join(["- " + r for r in risk_analysis.top_risks])}
-
-### Detailed Risk Register
+State machines and approval workflows in the module.
 
 """
-        for risk in risk_analysis.risks:
-            content += f"""### {risk.risk_id}: {risk.title}
+        for wf in requirements_analysis.workflow_specs:
+            content += f"""### {wf.workflow_id}: {wf.name}
 
-**Category:** {risk.category} | **Severity:** {risk.severity} | **Likelihood:** {risk.likelihood}
+**Entity:** {wf.entity}
 
-**Description:** {risk.description}
+**Description:** {wf.description}
 
-**Impact:** {risk.impact}
-
-**Affected Areas:** {", ".join(risk.affected_areas)}
-
-**Mitigation Strategies:**
-{chr(10).join(["- " + m for m in risk.mitigation_strategies])}
-
-**Contingency Plan:** {risk.contingency_plan}
-
-**Owner:** {risk.owner} | **Status:** {risk.status}
-
----
-
+**State Diagram:**
+```mermaid
+stateDiagram-v2
 """
-        
-        content += f"""
-### Technical Debt Items
-{chr(10).join(["- " + t for t in risk_analysis.technical_debt_items])}
+            # Add states
+            for state in wf.states:
+                content += f"    {state.get('id', 'state')}: {state.get('name', 'State')}\n"
 
-### Critical Success Factors
-{chr(10).join(["- " + s for s in risk_analysis.success_factors])}
-"""
-        
-        return PRDSection(title="8. Risk Assessment", content=content, order=8)
-    
+            # Add initial state
+            if wf.initial_state:
+                content += f"    [*] --> {wf.initial_state}\n"
+
+            # Add transitions
+            for trans in wf.transitions:
+                from_state = trans.get("from", "start")
+                to_state = trans.get("to", "end")
+                trigger = trans.get("trigger", "action")
+                content += f"    {from_state} --> {to_state}: {trigger}\n"
+
+            # Add terminal states
+            for term in wf.terminal_states:
+                content += f"    {term} --> [*]\n"
+
+            content += "```\n\n"
+
+            content += "**States:**\n"
+            for state in wf.states:
+                content += f"- **{state.get('id', 'state')}** ({state.get('name', '')}): {state.get('description', '')}\n"
+
+            content += "\n**Transitions:**\n"
+            content += "| From | To | Trigger | Conditions | Actions |\n"
+            content += "|------|-----|---------|------------|--------|\n"
+            for trans in wf.transitions:
+                conditions = ", ".join(trans.get("guard_conditions", []))[:30] or "—"
+                actions = ", ".join(trans.get("actions", []))[:30] or "—"
+                content += f"| {trans.get('from', '')} | {trans.get('to', '')} | {trans.get('trigger', '')} | {conditions} | {actions} |\n"
+
+            if wf.source_location:
+                content += f"\n**Source Reference:** `{wf.source_location}`\n"
+
+            content += "\n---\n"
+
+        return PRDSection(title=f"{order}. Workflow Specifications", content=content, order=order)
+
     async def _generate_migration_section(
-        self, context: AgentContext, risk_analysis: RiskAnalysisResult | None
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult | None,
+        kb_contexts: dict[str, list[str]],
+        order: int,
     ) -> PRDSection:
         """Generate the migration strategy section."""
-        complexity = risk_analysis.migration_complexity if risk_analysis else "medium"
-        approach = (
-            risk_analysis.recommended_approach
-            if risk_analysis
-            else "Phased migration approach recommended."
-        )
-        
-        content = f"""## Migration Strategy
+        # Assess complexity
+        complexity = self._assess_complexity(requirements_analysis)
 
-### Migration Complexity
-**Assessed Complexity Level:** {complexity.upper()}
-
-### Recommended Approach
-{approach}
-
-### Migration Phases
-
-#### Phase 1: Preparation
-- Environment setup
-- Data migration planning
-- Team training
-
-#### Phase 2: Development
-- Core functionality implementation
-- Integration development
-- Unit testing
-
-#### Phase 3: Testing
-- Integration testing
-- User acceptance testing
-- Performance testing
-
-#### Phase 4: Deployment
-- Staged rollout
-- Parallel running (if applicable)
-- Full cutover
-
-### Rollback Strategy
-Detailed rollback procedures to be defined during implementation planning.
+        # Get technical details
+        tech_details = ""
+        if requirements_analysis:
+            tech_details = f"""
+- Functional Requirements: {len(requirements_analysis.functional_requirements)}
+- API Endpoints: {len(requirements_analysis.api_specifications)}
+- Data Entities: {len(requirements_analysis.data_requirements)}
+- Business Logic Items: {len(requirements_analysis.business_logic)}
+- Integrations: {len(requirements_analysis.integration_requirements)}
+- Validation Rules: {len(requirements_analysis.validation_rules)}
+- Workflows: {len(requirements_analysis.workflow_specs)}
 """
-        
-        return PRDSection(title="9. Migration Strategy", content=content, order=9)
-    
+
+        kb_context = self.format_context_for_prompt(
+            kb_contexts.get("existing_prd", []), max_contexts=3
+        )
+
+        prompt = PRDAggregatorPrompts.migration_strategy_section(
+            context.form_name, complexity, f"{tech_details}\n\nEXISTING PRD:\n{kb_context}"
+        )
+
+        content = await self.invoke_llm(context, prompt)
+
+        return PRDSection(title=f"{order}. Migration Strategy", content=content, order=order)
+
     async def _generate_executive_summary(
         self,
         context: AgentContext,
         requirements_analysis: RequirementsGeneratorResult | None,
-        risk_analysis: RiskAnalysisResult | None,
+        kb_contexts: dict[str, list[str]],
     ) -> str:
-        """Generate the executive summary."""
+        """Generate the executive summary with metrics."""
         req_count = (
             len(requirements_analysis.functional_requirements) if requirements_analysis else 0
         )
-        risk_level = risk_analysis.migration_complexity if risk_analysis else "medium"
-        
-        prompt = f"""Write an executive summary for the "{context.form_name}" PRD:
+        api_count = len(requirements_analysis.api_specifications) if requirements_analysis else 0
+        entity_count = len(requirements_analysis.data_requirements) if requirements_analysis else 0
+        integration_count = (
+            len(requirements_analysis.integration_requirements) if requirements_analysis else 0
+        )
+        complexity = self._assess_complexity(requirements_analysis)
 
-Key metrics:
-- Functional requirements: {req_count}
-- Migration complexity: {risk_level}
-
-The summary should:
-1. Describe the module purpose
-2. Summarize key functionality
-3. Highlight critical risks
-4. Provide migration recommendation
-5. State estimated effort
-
-Write 3-4 paragraphs suitable for executive stakeholders."""
+        prompt = PRDAggregatorPrompts.executive_summary(
+            context.form_name,
+            req_count,
+            api_count,
+            entity_count,
+            integration_count,
+            complexity,
+        )
 
         return await self.invoke_llm(context, prompt)
-    
+
+    def _assess_complexity(self, requirements_analysis: RequirementsGeneratorResult | None) -> str:
+        """Assess migration complexity based on requirements."""
+        if not requirements_analysis:
+            return "MEDIUM"
+
+        score = 0
+        score += len(requirements_analysis.functional_requirements) * 2
+        score += len(requirements_analysis.api_specifications) * 3
+        score += len(requirements_analysis.data_requirements) * 2
+        score += len(requirements_analysis.integration_requirements) * 5
+        score += len(requirements_analysis.workflow_specs) * 4
+        score += len(requirements_analysis.validation_rules)
+
+        if score < 30:
+            return "LOW"
+        elif score < 80:
+            return "MEDIUM"
+        elif score < 150:
+            return "HIGH"
+        else:
+            return "VERY HIGH"
+
     def _generate_appendices(
         self,
         screenshot_analysis: ScreenshotAnalysisResult | None,
         requirements_analysis: RequirementsGeneratorResult | None,
         user_flow_analysis: UserFlowResult | None,
     ) -> list[dict[str, str]]:
-        """Generate appendix content."""
+        """Generate appendix content with code references."""
         appendices = []
-        
-        # Appendix A: Glossary
+
+        # Appendix A: Code References
+        if requirements_analysis and requirements_analysis.code_references:
+            code_refs = "| Category | Source Files |\n|----------|-------------|\n"
+            for category, files in requirements_analysis.code_references.items():
+                code_refs += f"| {category} | {', '.join(['`' + f + '`' for f in files[:5]])} |\n"
+
+            appendices.append({"title": "Appendix A: Source Code References", "content": code_refs})
+
+        # Appendix B: Glossary
         appendices.append(
             {
-            "title": "Appendix A: Glossary",
+                "title": "Appendix B: Glossary",
                 "content": "Key terms and definitions used in this document.",
             }
         )
-        
-        # Appendix B: Reference Materials
-        appendices.append(
-            {
-            "title": "Appendix B: Reference Materials",
-                "content": "Source documents and references consulted during analysis.",
-            }
-        )
-        
+
         # Appendix C: Change Log
         appendices.append(
             {
-            "title": "Appendix C: Change Log",
+                "title": "Appendix C: Change Log",
                 "content": "| Version | Date | Author | Changes |\n|---------|------|--------|---------|",
             }
         )
-        
+
         return appendices
-    
+
     def _generate_markdown(self, prd: PRDDocument) -> str:
         """Generate the complete markdown document."""
         md = f"""# {prd.title}
@@ -650,6 +1152,7 @@ Write 3-4 paragraphs suitable for executive stakeholders."""
 **Version:** {prd.version}
 **Created:** {prd.created_date}
 **Author:** {prd.author}
+**PRD Type:** Migration Specification
 
 ---
 
@@ -659,22 +1162,48 @@ Write 3-4 paragraphs suitable for executive stakeholders."""
 
 ---
 
+## Document Statistics
+
+| Metric | Count |
+|--------|-------|
+"""
+        if "statistics" in prd.metadata:
+            stats = prd.metadata["statistics"]
+            for key, value in stats.items():
+                display_key = key.replace("_", " ").title()
+                md += f"| {display_key} | {value} |\n"
+
+        md += """
+---
+
 ## Table of Contents
 
 """
         # Generate TOC
         for section in prd.sections:
-            md += f"- [{section.title}](#{section.title.lower().replace(' ', '-').replace('.', '')})\n"
-        
+            anchor = section.title.lower().replace(" ", "-").replace(".", "")
+            md += f"- [{section.title}](#{anchor})\n"
+
         md += "\n---\n\n"
-        
+
         # Add sections
         for section in prd.sections:
             md += f"# {section.title}\n\n{section.content}\n\n---\n\n"
-        
+
         # Add appendices
         md += "# Appendices\n\n"
         for appendix in prd.appendices:
             md += f"## {appendix['title']}\n\n{appendix['content']}\n\n"
-        
+
         return md
+
+    def _format_json_schema(self, schema: dict[str, Any]) -> str:
+        """Format a dictionary as a readable JSON schema."""
+        import json
+
+        if not schema:
+            return "{}"
+        try:
+            return json.dumps(schema, indent=2)
+        except (TypeError, ValueError):
+            return str(schema)

@@ -16,10 +16,10 @@ from src.utils.logging_config import get_logger, setup_logging
 from src.workflows.activities import (
     aggregate_prd_activity,
     analyze_jira_activity,
-    analyze_risks_activity,
     analyze_screenshots_activity,
     analyze_user_flows_activity,
     extract_code_activity,
+    extract_existing_prd_activity,
     extract_jira_activity,
     extract_screenshots_activity,
     generate_requirements_activity,
@@ -33,14 +33,17 @@ logger = get_logger(__name__)
 
 # All activities to register
 ACTIVITIES = [
+    # Extraction activities
     extract_code_activity,
     extract_screenshots_activity,
     extract_jira_activity,
+    extract_existing_prd_activity,  # Extract existing PRD docs for knowledge base
+    # Analysis activities
     analyze_screenshots_activity,
     analyze_jira_activity,
     generate_requirements_activity,
     analyze_user_flows_activity,
-    analyze_risks_activity,
+    # Aggregation and storage activities
     aggregate_prd_activity,
     store_analysis_results_activity,
     store_vectors_activity,

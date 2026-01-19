@@ -21,16 +21,27 @@ async def store_vectors_activity(
     code_data: dict[str, Any] | None = None,
     screenshot_data: dict[str, Any] | None = None,
     jira_data: dict[str, Any] | None = None,
+    existing_prd_data: dict[str, Any] | None = None,
     recreate_collection: bool = False,
 ) -> dict[str, Any]:
-    """Store all extracted data as vectors in Qdrant."""
+    """
+    Store all extracted data as vectors in Qdrant.
+    
+    This creates a unified knowledge base containing:
+    - Legacy code (for understanding existing implementation)
+    - Screenshots (for UI context)
+    - Jira issues (for requirements context)
+    - Existing PRD documents (for business logic and app flow context)
+    
+    This combined knowledge base is used for migration purposes.
+    """
     logger.info("Starting vector storage", form_name=form_name)
 
     qdrant = QdrantManager()
     collection_name = qdrant.create_collection(form_name=form_name, recreate=recreate_collection)
     total_vectors = 0
 
-    # Store code vectors
+    # Store code vectors (legacy code knowledge)
     if code_data:
         for file_info in code_data.get("files", []):
             content = _format_code_for_vector(file_info)
@@ -38,6 +49,7 @@ async def store_vectors_activity(
                 form_name=form_name, text=content, metadata=file_info, doc_type="code"
             )
             total_vectors += count
+        logger.info(f"Stored {len(code_data.get('files', []))} code files")
 
     # Store screenshot vectors
     if screenshot_data:
@@ -59,6 +71,12 @@ async def store_vectors_activity(
             count = qdrant.add_documents(form_name, documents)
             total_vectors += count
 
+    # Store existing PRD documents (business logic and app flow context)
+    if existing_prd_data and existing_prd_data.get("success"):
+        prd_vectors = _store_existing_prd_vectors(qdrant, form_name, existing_prd_data)
+        total_vectors += prd_vectors
+        logger.info(f"Stored {prd_vectors} vectors from existing PRD documents")
+
     stats = qdrant.get_collection_stats(form_name)
 
     return {
@@ -67,6 +85,70 @@ async def store_vectors_activity(
         "total_vectors_added": total_vectors,
         "collection_stats": stats,
     }
+
+
+def _store_existing_prd_vectors(
+    qdrant: QdrantManager, form_name: str, prd_data: dict[str, Any]
+) -> int:
+    """
+    Store existing PRD documents in vector store.
+    
+    These documents contain critical business logic, requirements, and app flow
+    information that's essential for the migration knowledge base.
+    """
+    count = 0
+
+    # Store each PRD document
+    for doc in prd_data.get("documents", []):
+        content = f"""
+PRD Document: {doc.get("filename", "")}
+Type: {doc.get("document_type", "")}
+Title: {doc.get("title", "")}
+
+Content:
+{doc.get("content", "")}
+"""
+        metadata = {
+            "filename": doc.get("filename", ""),
+            "document_type": doc.get("document_type", ""),
+            "title": doc.get("title", ""),
+            "word_count": doc.get("word_count", 0),
+            "form_name": form_name,
+            "source": "existing_prd",
+        }
+        
+        count += qdrant.add_text(
+            form_name=form_name,
+            text=content,
+            metadata=metadata,
+            doc_type="existing_prd",
+        )
+
+    # Store image descriptions (for context about UI flows in existing PRDs)
+    for img in prd_data.get("images", []):
+        content = f"""
+PRD Image: {img.get("filename", "")}
+Description: {img.get("description", "")}
+
+This image is part of the existing PRD documentation for {form_name}.
+It shows: {img.get("description", "UI screenshot or diagram")}
+"""
+        metadata = {
+            "filename": img.get("filename", ""),
+            "description": img.get("description", ""),
+            "content_type": img.get("content_type", "image/png"),
+            "form_name": form_name,
+            "source": "existing_prd_image",
+        }
+        
+        count += qdrant.add_text(
+            form_name=form_name,
+            text=content,
+            metadata=metadata,
+            doc_type="existing_prd_image",
+        )
+
+    return count
 
 
 def _format_code_for_vector(file_info: dict[str, Any]) -> str:

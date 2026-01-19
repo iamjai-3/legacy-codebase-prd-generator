@@ -7,6 +7,7 @@ from temporalio import activity
 from src.extractors.code_extractor import CodeExtractor
 from src.extractors.jira_extractor import JiraExtractor
 from src.extractors.minio_extractor import MinioExtractor
+from src.extractors.prd_extractor import PRDExtractor
 from src.utils.logging_config import get_logger
 from src.workflows.activities.common import to_dict
 
@@ -132,3 +133,81 @@ async def extract_jira_activity(
             "raw_issues": [],
             "error": str(e),
         }
+
+
+@activity.defn
+async def extract_existing_prd_activity(
+    form_name: str,
+    prd_base_dir: str | None = None,
+) -> dict[str, Any]:
+    """
+    Extract existing PRD documentation from src/PRDs folder.
+    
+    This extracts markdown documents and images that contain:
+    - Business logic descriptions
+    - Requirements documentation
+    - Source table mappings
+    - UI screenshots with annotations
+    
+    These are combined into the knowledge base for migration purposes.
+    """
+    logger.info("Starting existing PRD extraction", form_name=form_name, prd_base_dir=prd_base_dir)
+
+    extractor = PRDExtractor(prd_base_dir=prd_base_dir)
+    existing_prd = extractor.extract_existing_prd(form_name)
+
+    if not existing_prd:
+        logger.info(f"No existing PRD found for {form_name}")
+        return {
+            "form_name": form_name,
+            "success": False,
+            "document_count": 0,
+            "image_count": 0,
+            "documents": [],
+            "images": [],
+            "combined_content": "",
+        }
+
+    # Serialize documents (exclude raw image bytes to avoid large payloads)
+    documents_data = [
+        {
+            "path": doc.path,
+            "filename": doc.filename,
+            "content": doc.content,
+            "document_type": doc.document_type,
+            "title": doc.title,
+            "word_count": doc.word_count,
+            "section_count": doc.section_count,
+        }
+        for doc in existing_prd.documents
+    ]
+
+    # Serialize images (include base64 for vector store, exclude raw bytes)
+    images_data = [
+        {
+            "path": img.path,
+            "filename": img.filename,
+            "base64_data": img.base64_data,
+            "content_type": img.content_type,
+            "description": img.description,
+            "size": img.size,
+        }
+        for img in existing_prd.images
+    ]
+
+    logger.info(
+        f"Extracted existing PRD for {form_name}: "
+        f"{len(documents_data)} documents, {len(images_data)} images"
+    )
+
+    return {
+        "form_name": form_name,
+        "success": True,
+        "prd_directory": existing_prd.prd_directory,
+        "document_count": len(documents_data),
+        "image_count": len(images_data),
+        "documents": documents_data,
+        "images": images_data,
+        "combined_content": existing_prd.combined_content,
+        "total_words": sum(doc.word_count for doc in existing_prd.documents),
+    }

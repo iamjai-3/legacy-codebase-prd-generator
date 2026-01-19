@@ -17,10 +17,10 @@ with workflow.unsafe.imports_passed_through():
     from src.workflows.activities import (
         aggregate_prd_activity,
         analyze_jira_activity,
-        analyze_risks_activity,
         analyze_screenshots_activity,
         analyze_user_flows_activity,
         extract_code_activity,
+        extract_existing_prd_activity,
         extract_jira_activity,
         extract_screenshots_activity,
         generate_requirements_activity,
@@ -69,12 +69,18 @@ class PRDGenerationWorkflow:
     """
     Temporal workflow that orchestrates the entire PRD generation process.
 
+    This workflow creates a combined knowledge base from:
+    - Legacy code (for existing implementation details)
+    - Screenshots (for UI context)
+    - Jira issues (for requirements context)
+    - Existing PRD documents (for business logic and app flow)
+
     Workflow Steps:
-    1. Extract data from all sources (code, screenshots, Jira) - parallel
-    2. Store extracted data as vectors
+    1. Extract data from all sources (code, screenshots, Jira, existing PRDs)
+    2. Store all extracted data as vectors in unified knowledge base
     3. Run analysis agents (screenshot, Jira) - parallel
-    4. Generate requirements
-    5. Analyze user flows and risks - parallel
+    4. Generate requirements using knowledge base
+    5. Analyze user flows using knowledge base
     6. Aggregate all insights into PRD
     7. Save PRD document
     """
@@ -104,7 +110,7 @@ class PRDGenerationWorkflow:
         jira: dict[str, Any],
         requirements: dict[str, Any],
         user_flow: dict[str, Any],
-        risk: dict[str, Any],
+        existing_prd: dict[str, Any],
     ) -> dict[str, bool]:
         """Build agent results summary."""
         return {
@@ -112,7 +118,7 @@ class PRDGenerationWorkflow:
             "jira_analysis": jira.get("success", False),
             "requirements_analysis": requirements.get("success", False),
             "user_flow_analysis": user_flow.get("success", False),
-            "risk_analysis": risk.get("success", False),
+            "existing_prd_extraction": existing_prd.get("success", False),
         }
 
     def _build_success_output(
@@ -154,10 +160,10 @@ class PRDGenerationWorkflow:
         long_opts = {"start_to_close_timeout": timedelta(minutes=60), "retry_policy": retry_policy}
 
         try:
-            # Phase 1: Data Extraction
+            # Phase 1: Data Extraction (code, screenshots, Jira, existing PRDs)
             extraction = await self._extract_data(input, opts)
 
-            # Phase 2: Vector Storage
+            # Phase 2: Vector Storage (creates unified knowledge base)
             vector_result = await self._store_vectors(input, extraction, opts)
 
             # Phase 3: Initial Analysis
@@ -168,19 +174,26 @@ class PRDGenerationWorkflow:
                 input, extraction, analysis, long_opts
             )
 
-            # Phase 5: Flow and Risk Analysis
-            flow_risk = await self._analyze_flows_and_risks(
-                input, extraction, analysis, requirements_analysis, long_opts
+            # Phase 5: User Flow Analysis
+            user_flow_analysis = await self._analyze_user_flows(
+                input, extraction, analysis, long_opts
             )
 
             # Phase 5.5: Store Analysis Results
             await self._store_analysis_results(
-                input, analysis, requirements_analysis, flow_risk, opts
+                input, analysis, requirements_analysis, user_flow_analysis, opts
             )
 
             # Phase 6 & 7: Aggregate and Save PRD
             return await self._finalize_prd(
-                input, analysis, requirements_analysis, flow_risk, vector_result, long_opts, opts
+                input,
+                extraction,
+                analysis,
+                requirements_analysis,
+                user_flow_analysis,
+                vector_result,
+                long_opts,
+                opts,
             )
 
         except Exception as e:
@@ -190,7 +203,7 @@ class PRDGenerationWorkflow:
     async def _extract_data(
         self, input: PRDGenerationInput, opts: dict[str, Any]
     ) -> dict[str, dict[str, Any]]:
-        """Phase 1: Extract data from all sources."""
+        """Phase 1: Extract data from all sources including existing PRDs."""
         workflow.logger.info("Phase 1: Extracting data from all sources")
 
         code_data = self._empty_result("code")
@@ -223,13 +236,26 @@ class PRDGenerationWorkflow:
                 **opts,
             )
 
+        # Extract existing PRD documents (business logic, app flow, requirements)
+        existing_prd_data = await workflow.execute_activity(
+            extract_existing_prd_activity,
+            args=[input.form_name, None],  # Uses default src/PRDs directory
+            **opts,
+        )
+
         workflow.logger.info(
             f"Extraction complete - Code: {code_data.get('file_count', 0)}, "
             f"Screenshots: {screenshot_data.get('screenshot_count', 0)}, "
-            f"Jira: {jira_data.get('issue_count', 0)}"
+            f"Jira: {jira_data.get('issue_count', 0)}, "
+            f"Existing PRD docs: {existing_prd_data.get('document_count', 0)}"
         )
 
-        return {"code": code_data, "screenshots": screenshot_data, "jira": jira_data}
+        return {
+            "code": code_data,
+            "screenshots": screenshot_data,
+            "jira": jira_data,
+            "existing_prd": existing_prd_data,
+        }
 
     async def _store_vectors(
         self,
@@ -237,8 +263,8 @@ class PRDGenerationWorkflow:
         extraction: dict[str, dict[str, Any]],
         opts: dict[str, Any],
     ) -> dict[str, Any]:
-        """Phase 2: Store extracted data as vectors."""
-        workflow.logger.info("Phase 2: Storing data as vectors")
+        """Phase 2: Store extracted data as vectors to create unified knowledge base."""
+        workflow.logger.info("Phase 2: Creating unified knowledge base (vector storage)")
 
         result = await workflow.execute_activity(
             store_vectors_activity,
@@ -247,14 +273,15 @@ class PRDGenerationWorkflow:
                 extraction["code"],
                 extraction["screenshots"],
                 extraction["jira"],
+                extraction["existing_prd"],  # Include existing PRD documents
                 input.recreate_vector_collection,
             ],
             **opts,
         )
 
         workflow.logger.info(
-            f"Vector storage complete - Collection: {result.get('collection_name')}, "
-            f"Vectors: {result.get('total_vectors_added', 0)}"
+            f"Knowledge base created - Collection: {result.get('collection_name')}, "
+            f"Total vectors: {result.get('total_vectors_added', 0)}"
         )
         return result
 
@@ -304,18 +331,17 @@ class PRDGenerationWorkflow:
             **opts,
         )
 
-    async def _analyze_flows_and_risks(
+    async def _analyze_user_flows(
         self,
         input: PRDGenerationInput,
         extraction: dict[str, dict[str, Any]],
         analysis: dict[str, dict[str, Any]],
-        requirements: dict[str, Any],
         opts: dict[str, Any],
-    ) -> dict[str, dict[str, Any]]:
-        """Phase 5: Analyze user flows and risks in parallel."""
-        workflow.logger.info("Phase 5: Analyzing user flows and risks")
+    ) -> dict[str, Any]:
+        """Phase 5: Analyze user flows using the knowledge base."""
+        workflow.logger.info("Phase 5: Analyzing user flows")
 
-        user_flow_task = workflow.execute_activity(
+        user_flow_analysis = await workflow.execute_activity(
             analyze_user_flows_activity,
             args=[
                 input.form_name,
@@ -325,23 +351,14 @@ class PRDGenerationWorkflow:
             **opts,
         )
 
-        risk_task = workflow.execute_activity(
-            analyze_risks_activity,
-            args=[input.form_name, extraction["code"], self._result_if_success(requirements)],
-            **opts,
-        )
-
-        user_flow_analysis = await user_flow_task
-        risk_analysis = await risk_task
-
-        return {"user_flow": user_flow_analysis, "risk": risk_analysis}
+        return user_flow_analysis
 
     async def _store_analysis_results(
         self,
         input: PRDGenerationInput,
         analysis: dict[str, dict[str, Any]],
         requirements: dict[str, Any],
-        flow_risk: dict[str, dict[str, Any]],
+        user_flow: dict[str, Any],
         opts: dict[str, Any],
     ) -> None:
         """Phase 5.5: Store analysis results in knowledge base."""
@@ -353,8 +370,8 @@ class PRDGenerationWorkflow:
                 input.form_name,
                 self._result_if_success(analysis["screenshot"]),
                 self._result_if_success(requirements),
-                self._result_if_success(flow_risk["user_flow"]),
-                self._result_if_success(flow_risk["risk"]),
+                self._result_if_success(user_flow),
+                None,  # No risk analysis
             ],
             **opts,
         )
@@ -362,9 +379,10 @@ class PRDGenerationWorkflow:
     async def _finalize_prd(
         self,
         input: PRDGenerationInput,
+        extraction: dict[str, dict[str, Any]],
         analysis: dict[str, dict[str, Any]],
         requirements: dict[str, Any],
-        flow_risk: dict[str, dict[str, Any]],
+        user_flow: dict[str, Any],
         vector_result: dict[str, Any],
         long_opts: dict[str, Any],
         opts: dict[str, Any],
@@ -379,8 +397,7 @@ class PRDGenerationWorkflow:
                 self._result_if_success(analysis["screenshot"]),
                 self._result_if_success(analysis["jira"]),
                 self._result_if_success(requirements),
-                self._result_if_success(flow_risk["user_flow"]),
-                self._result_if_success(flow_risk["risk"]),
+                self._result_if_success(user_flow),
             ],
             **long_opts,
         )
@@ -406,8 +423,8 @@ class PRDGenerationWorkflow:
             analysis["screenshot"],
             analysis["jira"],
             requirements,
-            flow_risk["user_flow"],
-            flow_risk["risk"],
+            user_flow,
+            extraction["existing_prd"],
         )
 
         return self._build_success_output(

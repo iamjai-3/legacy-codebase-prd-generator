@@ -131,12 +131,18 @@ def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: st
         return None
 
     from src.agents.requirements_generator_agent import (
+        APISpecification,
+        BusinessLogic,
         DataRequirement,
         FunctionalRequirement,
+        IntegrationRequirement,
         NonFunctionalRequirement,
         RequirementsGeneratorResult,
+        ValidationRule,
+        WorkflowSpec,
     )
 
+    # Reconstruct functional requirements with enhanced fields
     func_reqs = [
         FunctionalRequirement(
             req_id=req.get("req_id", ""),
@@ -144,36 +150,134 @@ def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: st
             description=req.get("description", ""),
             priority=req.get("priority", "P2"),
             category=req.get("category", ""),
+            business_logic=req.get("business_logic", ""),
+            source_methods=req.get("source_methods", []),
+            api_specification=req.get("api_specification", {}),
+            database_operations=req.get("database_operations", []),
+            validation_rules=req.get("validation_rules", []),
+            calculations=req.get("calculations", []),
             user_story=req.get("user_story", ""),
             acceptance_criteria=req.get("acceptance_criteria", []),
             dependencies=req.get("dependencies", []),
-            source_references=req.get("source_references", []),
+            source_files=req.get("source_files", []),
         )
         for req in data.get("functional_requirements", [])
     ]
 
+    # Reconstruct non-functional requirements with enhanced fields
     non_func_reqs = [
         NonFunctionalRequirement(
             req_id=req.get("req_id", ""),
             category=req.get("category", ""),
+            title=req.get("title", ""),
             description=req.get("description", ""),
+            current_implementation=req.get("current_implementation", ""),
             metric=req.get("metric", ""),
             target_value=req.get("target_value", ""),
-            validation_method=req.get("validation_method", ""),
+            measurement_method=req.get("measurement_method", ""),
+            migration_consideration=req.get("migration_consideration", ""),
+            priority=req.get("priority", "Medium"),
         )
         for req in data.get("non_functional_requirements", [])
     ]
 
+    # Reconstruct data requirements with enhanced fields
     data_reqs = [
         DataRequirement(
             entity_name=req.get("entity_name", ""),
             description=req.get("description", ""),
+            source_table=req.get("source_table", ""),
+            source_class=req.get("source_class", ""),
             fields=req.get("fields", []),
+            primary_key=req.get("primary_key", []),
+            foreign_keys=req.get("foreign_keys", []),
+            indexes=req.get("indexes", []),
             relationships=req.get("relationships", []),
-            constraints=req.get("constraints", []),
-            source_table=req.get("source_table"),
+            business_rules=req.get("business_rules", []),
+            sample_queries=req.get("sample_queries", []),
         )
         for req in data.get("data_requirements", [])
+    ]
+
+    # Reconstruct API specifications
+    api_specs = [
+        APISpecification(
+            endpoint_name=api.get("endpoint_name", ""),
+            http_method=api.get("http_method", "GET"),
+            path=api.get("path", ""),
+            description=api.get("description", ""),
+            request_spec=api.get("request_spec", {}),
+            response_spec=api.get("response_spec", {}),
+            business_logic=api.get("business_logic", ""),
+            source_method=api.get("source_method", ""),
+        )
+        for api in data.get("api_specifications", [])
+    ]
+
+    # Reconstruct business logic
+    business_logic = [
+        BusinessLogic(
+            logic_id=bl.get("logic_id", ""),
+            name=bl.get("name", ""),
+            logic_type=bl.get("logic_type", ""),
+            description=bl.get("description", ""),
+            trigger=bl.get("trigger", ""),
+            steps=bl.get("steps", []),
+            inputs=bl.get("inputs", []),
+            outputs=bl.get("outputs", []),
+            conditions=bl.get("conditions", []),
+            source_location=bl.get("source_location", ""),
+        )
+        for bl in data.get("business_logic", [])
+    ]
+
+    # Reconstruct integration requirements
+    integration_reqs = [
+        IntegrationRequirement(
+            integration_id=integ.get("integration_id", ""),
+            name=integ.get("name", ""),
+            integration_type=integ.get("integration_type", ""),
+            direction=integ.get("direction", ""),
+            external_system=integ.get("external_system", ""),
+            purpose=integ.get("purpose", ""),
+            specification=integ.get("specification", {}),
+            data_mapping=integ.get("data_mapping", []),
+            error_handling=integ.get("error_handling", {}),
+            source_files=integ.get("source_files", []),
+        )
+        for integ in data.get("integration_requirements", [])
+    ]
+
+    # Reconstruct validation rules
+    validation_rules = [
+        ValidationRule(
+            rule_id=vr.get("rule_id", ""),
+            field=vr.get("field", ""),
+            entity=vr.get("entity", ""),
+            rule_type=vr.get("rule_type", ""),
+            condition=vr.get("condition", ""),
+            error_message=vr.get("error_message", ""),
+            description=vr.get("description", ""),
+            when_applied=vr.get("when_applied", ""),
+            source_location=vr.get("source_location", ""),
+        )
+        for vr in data.get("validation_rules", [])
+    ]
+
+    # Reconstruct workflow specs
+    workflow_specs = [
+        WorkflowSpec(
+            workflow_id=wf.get("workflow_id", ""),
+            name=wf.get("name", ""),
+            description=wf.get("description", ""),
+            entity=wf.get("entity", ""),
+            states=wf.get("states", []),
+            transitions=wf.get("transitions", []),
+            initial_state=wf.get("initial_state", ""),
+            terminal_states=wf.get("terminal_states", []),
+            source_location=wf.get("source_location", ""),
+        )
+        for wf in data.get("workflow_specs", [])
     ]
 
     return RequirementsGeneratorResult(
@@ -181,12 +285,16 @@ def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: st
         functional_requirements=func_reqs,
         non_functional_requirements=non_func_reqs,
         data_requirements=data_reqs,
-        integration_requirements=data.get("integration_requirements", []),
-        validation_rules=data.get("validation_rules", []),
+        api_specifications=api_specs,
+        business_logic=business_logic,
+        integration_requirements=integration_reqs,
+        validation_rules=validation_rules,
+        workflow_specs=workflow_specs,
         business_rules=data.get("business_rules", []),
         assumptions=data.get("assumptions", []),
         out_of_scope=data.get("out_of_scope", []),
         summary=data.get("summary", ""),
+        code_references=data.get("code_references", {}),
     )
 
 

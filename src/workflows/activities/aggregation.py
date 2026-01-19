@@ -9,7 +9,6 @@ from src.agents.prd_aggregator_agent import PRDAggregatorAgent
 from src.utils.data_reconstruction import (
     reconstruct_atlassian_analysis,
     reconstruct_requirements_analysis,
-    reconstruct_risk_analysis,
     reconstruct_screenshot_analysis,
     reconstruct_user_flow_analysis,
 )
@@ -25,10 +24,9 @@ async def aggregate_prd_activity(
     jira_analysis: dict[str, Any] | None = None,
     requirements_analysis: dict[str, Any] | None = None,
     user_flow_analysis: dict[str, Any] | None = None,
-    risk_analysis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Aggregate all analyses into a PRD document."""
-    logger.info("Starting PRD aggregation", form_name=form_name)
+    """Aggregate all analyses into a migration-ready PRD document."""
+    logger.info("Starting migration-focused PRD aggregation", form_name=form_name)
 
     agent = PRDAggregatorAgent()
     context = AgentContext(form_name=form_name)
@@ -40,7 +38,6 @@ async def aggregate_prd_activity(
         atlassian_analysis=reconstruct_atlassian_analysis(jira_analysis, form_name),
         requirements_analysis=reconstruct_requirements_analysis(requirements_analysis, form_name),
         user_flow_analysis=reconstruct_user_flow_analysis(user_flow_analysis, form_name),
-        risk_analysis=reconstruct_risk_analysis(risk_analysis, form_name),
     )
 
     if result.success and result.data:
