@@ -274,7 +274,6 @@ async def _run_analysis_agents(
 ):
     """Phase 2: Run all analysis agents."""
     from src.agents.requirements_generator_agent import RequirementsGeneratorAgent
-    from src.agents.risk_analysis_agent import RiskAnalysisAgent
     from src.agents.user_flow_agent import UserFlowAgent
 
     screenshot_result = None
@@ -293,10 +292,7 @@ async def _run_analysis_agents(
     progress.update(task, description="Analyzing user flows...")
     flow_result = await UserFlowAgent().analyze(context)
 
-    progress.update(task, description="Analyzing risks...")
-    risk_result = await RiskAnalysisAgent().analyze(context)
-
-    return screenshot_result, jira_result, req_result, flow_result, risk_result
+    return screenshot_result, jira_result, req_result, flow_result
 
 
 async def _aggregate_and_save_prd(
@@ -305,7 +301,6 @@ async def _aggregate_and_save_prd(
     jira_result,
     req_result,
     flow_result,
-    risk_result,
     form_name: str,
     output_dir: str,
     progress: Progress,
@@ -322,7 +317,6 @@ async def _aggregate_and_save_prd(
         atlassian_analysis=_get_successful_data(jira_result),
         requirements_analysis=_get_successful_data(req_result),
         user_flow_analysis=_get_successful_data(flow_result),
-        risk_analysis=_get_successful_data(risk_result),
     )
 
     if not (prd_result.success and prd_result.data):
@@ -381,7 +375,7 @@ async def _run_direct_generation(
             progress,
             task,
         )
-        screenshot_result, jira_result, req_result, flow_result, risk_result = results
+        screenshot_result, jira_result, req_result, flow_result = results
 
         await _aggregate_and_save_prd(
             context,
@@ -389,7 +383,6 @@ async def _run_direct_generation(
             jira_result,
             req_result,
             flow_result,
-            risk_result,
             form_name,
             output_dir,
             progress,

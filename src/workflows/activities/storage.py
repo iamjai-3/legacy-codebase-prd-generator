@@ -338,7 +338,6 @@ async def store_analysis_results_activity(
     screenshot_analysis: dict[str, Any] | None = None,
     requirements_analysis: dict[str, Any] | None = None,
     user_flow_analysis: dict[str, Any] | None = None,
-    risk_analysis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Store analysis results in the vector knowledge base."""
     logger.info("Storing analysis results in vector store", form_name=form_name)

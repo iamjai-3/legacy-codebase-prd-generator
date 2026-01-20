@@ -262,11 +262,27 @@ class QdrantManager:
         # Build filter if provided
         query_filter = None
         if filter_metadata:
-            conditions = [
-                models.FieldCondition(key=f"metadata.{key}", match=models.MatchValue(value=value))
-                for key, value in filter_metadata.items()
-            ]
-            query_filter = models.Filter(must=conditions)
+            conditions = []
+            for key, value in filter_metadata.items():
+                # Support both direct metadata keys and nested metadata keys
+                if key == "doc_type" or key == "chunk_type":
+                    # These are stored in metadata.doc_type or metadata.chunk_type
+                    conditions.append(
+                        models.FieldCondition(
+                            key=f"metadata.{key}", 
+                            match=models.MatchValue(value=value)
+                        )
+                    )
+                else:
+                    # Other metadata fields
+                    conditions.append(
+                        models.FieldCondition(
+                            key=f"metadata.{key}", 
+                            match=models.MatchValue(value=value)
+                        )
+                    )
+            if conditions:
+                query_filter = models.Filter(must=conditions)
 
         # Perform search using query_points (newer API)
         # query_points accepts query as a list of floats (the embedding vector)

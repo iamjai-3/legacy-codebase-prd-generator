@@ -355,9 +355,27 @@ class CodeExtractor:
             if node.implements:
                 implements.extend([i.name for i in node.implements])
 
+            # Extract ALL fields including private ones
             for field in node.fields:
                 for declarator in field.declarators:
-                    fields.append(declarator.name)
+                    field_name = declarator.name
+                    # Include field type information
+                    field_type = ""
+                    if field.type:
+                        if isinstance(field.type, javalang.tree.ReferenceType):
+                            if hasattr(field.type.name, '__iter__'):
+                                field_type = ".".join(field.type.name)
+                            else:
+                                field_type = str(field.type.name)
+                        elif hasattr(field.type, 'name'):
+                            field_type = str(field.type.name)
+                        else:
+                            field_type = str(field.type)
+                    # Store as "name:type" for better context
+                    if field_type:
+                        fields.append(f"{field_name}:{field_type}")
+                    else:
+                        fields.append(field_name)
 
             for method in node.methods:
                 methods.append(method.name)
@@ -593,59 +611,193 @@ class CodeExtractor:
     def to_documents(self, code_files: list[CodeFile], form_name: str) -> list[Document]:
         """
         Convert CodeFile objects to LangChain Documents for vectorization.
+        
+        Creates separate chunks for:
+        - Class definitions (with all fields)
+        - Method implementations (business logic)
+        - Field mappings (legacy codes → normalized fields)
+        - Validation rules (extracted patterns)
 
         Args:
             code_files: List of parsed code files
             form_name: Name of the form these files belong to
 
         Returns:
-            List of LangChain Documents
+            List of LangChain Documents with enhanced metadata
         """
         documents: list[Document] = []
 
         for code_file in code_files:
-            # Create a comprehensive text representation
-            text_parts = [
-                f"File: {code_file.path}",
-                f"Language: {code_file.language}",
-                f"Type: {code_file.file_type}",
-                "",
-            ]
-
-            if code_file.classes:
-                text_parts.append(f"Classes: {', '.join(code_file.classes)}")
-
+            # Determine document type based on file characteristics
+            is_dto = any("DTO" in c or "dto" in c.lower() for c in code_file.classes) or "dto" in code_file.path.lower()
+            is_model = code_file.file_type == "model" or "model" in code_file.path.lower()
+            is_support = "Support" in code_file.path or "support" in code_file.path.lower()
+            
+            # Create class definition document (for DTOs/models)
+            if is_dto or is_model:
+                class_doc = self._create_class_definition_document(code_file, form_name)
+                if class_doc:
+                    documents.append(class_doc)
+            
+            # Create method/business logic documents
             if code_file.methods:
-                text_parts.append(f"Methods: {', '.join(code_file.methods[:20])}...")  # Limit
+                method_docs = self._create_method_documents(code_file, form_name)
+                documents.extend(method_docs)
+            
+            # Create comprehensive code document (fallback for other files)
+            if not (is_dto or is_model):
+                comprehensive_doc = self._create_comprehensive_document(code_file, form_name)
+                documents.append(comprehensive_doc)
 
-            if code_file.imports:
-                text_parts.append(f"Imports: {', '.join(code_file.imports[:10])}...")
-
-            text_parts.extend(["", "Code:", code_file.content])
-
-            metadata = {
-                "form_name": form_name,
-                "file_path": code_file.path,
-                "language": code_file.language,
-                "file_type": code_file.file_type,
-                "classes": code_file.classes,
-                "methods": code_file.methods[:20],  # Limit for metadata
-                "fields": code_file.fields[:20],
-                "extends": code_file.extends,
-                "implements": code_file.implements,
-                "line_count": code_file.line_count,
-                "doc_type": "code",
-            }
-
-            document = Document(
-                page_content="\n".join(text_parts),
-                metadata=metadata,
-            )
-            documents.append(document)
-
-        logger.info("Converted code files to documents", count=len(documents))
+        logger.info("Converted code files to documents", count=len(documents), files=len(code_files))
 
         return documents
+    
+    def _create_class_definition_document(self, code_file: CodeFile, form_name: str) -> Document | None:
+        """Create a document focused on class definition with all fields."""
+        if not code_file.classes:
+            return None
+            
+        text_parts = [
+            f"File: {code_file.path}",
+            f"Class Definition: {', '.join(code_file.classes)}",
+            f"Language: {code_file.language}",
+            "",
+        ]
+        
+        if code_file.extends:
+            text_parts.append(f"Extends: {code_file.extends}")
+        if code_file.implements:
+            text_parts.append(f"Implements: {', '.join(code_file.implements)}")
+        
+        text_parts.append("")
+        text_parts.append("## All Fields:")
+        if code_file.fields:
+            for field in code_file.fields:
+                text_parts.append(f"- {field}")
+        else:
+            text_parts.append("- No fields detected")
+        
+        text_parts.append("")
+        text_parts.append("## Full Class Code:")
+        # Include up to 8000 chars for better context
+        text_parts.append(code_file.content[:8000])
+        
+        metadata = {
+            "form_name": form_name,
+            "file_path": code_file.path,
+            "language": code_file.language,
+            "file_type": code_file.file_type,
+            "classes": code_file.classes,
+            "fields": code_file.fields,  # Include ALL fields
+            "extends": code_file.extends,
+            "implements": code_file.implements,
+            "line_count": code_file.line_count,
+            "doc_type": "class_definition",
+            "chunk_type": "class_definition",
+        }
+        
+        return Document(
+            page_content="\n".join(text_parts),
+            metadata=metadata,
+        )
+    
+    def _create_method_documents(self, code_file: CodeFile, form_name: str) -> list[Document]:
+        """Create separate documents for important methods (business logic)."""
+        documents = []
+        
+        # Focus on methods that likely contain business logic
+        important_methods = [
+            m for m in code_file.methods 
+            if any(keyword in m.lower() for keyword in [
+                "save", "update", "delete", "create", "validate", "check", 
+                "does", "using", "get", "set", "action"
+            ])
+        ]
+        
+        # If too many methods, prioritize the important ones
+        methods_to_process = important_methods[:10] if len(important_methods) > 10 else code_file.methods[:15]
+        
+        for method_name in methods_to_process:
+            # Extract method content using regex
+            method_pattern = rf'(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)?{re.escape(method_name)}\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{{([^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)'
+            match = re.search(method_pattern, code_file.content, re.MULTILINE | re.DOTALL)
+            
+            if match:
+                method_body = match.group(0)[:8000]  # Up to 8000 chars
+                line_num = code_file.content[:match.start()].count('\n') + 1
+                
+                text_parts = [
+                    f"File: {code_file.path}",
+                    f"Method: {method_name}",
+                    f"Line: {line_num}",
+                    f"Class: {', '.join(code_file.classes) if code_file.classes else 'N/A'}",
+                    "",
+                    "## Method Implementation:",
+                    method_body,
+                ]
+                
+                metadata = {
+                    "form_name": form_name,
+                    "file_path": code_file.path,
+                    "language": code_file.language,
+                    "file_type": code_file.file_type,
+                    "method_name": method_name,
+                    "classes": code_file.classes,
+                    "line_number": line_num,
+                    "doc_type": "business_logic",
+                    "chunk_type": "method_implementation",
+                }
+                
+                documents.append(Document(
+                    page_content="\n".join(text_parts),
+                    metadata=metadata,
+                ))
+        
+        return documents
+    
+    def _create_comprehensive_document(self, code_file: CodeFile, form_name: str) -> Document:
+        """Create a comprehensive document for files that aren't DTOs/models."""
+        text_parts = [
+            f"File: {code_file.path}",
+            f"Language: {code_file.language}",
+            f"Type: {code_file.file_type}",
+            "",
+        ]
+
+        if code_file.classes:
+            text_parts.append(f"Classes: {', '.join(code_file.classes)}")
+
+        if code_file.methods:
+            text_parts.append(f"Methods: {', '.join(code_file.methods[:30])}")
+
+        if code_file.fields:
+            text_parts.append(f"Fields: {', '.join(code_file.fields)}")
+
+        if code_file.imports:
+            text_parts.append(f"Imports: {', '.join(code_file.imports[:15])}")
+
+        text_parts.extend(["", "## Code:", code_file.content[:8000]])  # Increased from 1500 to 8000
+
+        metadata = {
+            "form_name": form_name,
+            "file_path": code_file.path,
+            "language": code_file.language,
+            "file_type": code_file.file_type,
+            "classes": code_file.classes,
+            "methods": code_file.methods[:30],
+            "fields": code_file.fields,
+            "extends": code_file.extends,
+            "implements": code_file.implements,
+            "line_count": code_file.line_count,
+            "doc_type": "code",
+            "chunk_type": "comprehensive",
+        }
+
+        return Document(
+            page_content="\n".join(text_parts),
+            metadata=metadata,
+        )
 
     def get_form_mapping(
         self,

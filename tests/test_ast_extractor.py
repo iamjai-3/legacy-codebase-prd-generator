@@ -23,14 +23,14 @@ class TestASTExtractor:
         import com.example.model.BaseEntity;
 
         public class UserService extends BaseEntity implements Service, Configurable {
-            
+
             private UserRepository userRepository;
             public static final String CACHE_KEY = "users";
-            
+
             public User findById(Long id) {
                 return userRepository.find(id);
             }
-            
+
             private void validate(User user) {
                 // validation
             }
@@ -65,13 +65,13 @@ from .base import BaseService
 class UserService(BaseService):
     def __init__(self, db):
         self.db = db
-        
+
     def find_user(self, id: int) -> dict:
         return self.db.get(id)
         """
 
-        classes, methods, imports, fields, inherits, implements = (
-            extractor._extract_code_structure_ast(python_content, "python")
+        classes, methods, imports, _, inherits, _ = extractor._extract_code_structure_ast(
+            python_content, "python"
         )
 
         assert "UserService" in classes
@@ -92,15 +92,15 @@ class UserService(BaseService):
             username VARCHAR(50),
             email VARCHAR(100)
         );
-        
+
         SELECT * FROM users WHERE id = 1;
 
         INSERT INTO audit_log (action) VALUES ('login');
         """
 
         # SQL should use the AST path too now
-        classes, methods, imports, fields, inherits, implements = (
-            extractor._extract_code_structure_ast(sql_content, "sql")
+        classes, methods, _, fields, _, _ = extractor._extract_code_structure_ast(
+            sql_content, "sql"
         )
 
         assert "users" in classes  # Tables -> Classes

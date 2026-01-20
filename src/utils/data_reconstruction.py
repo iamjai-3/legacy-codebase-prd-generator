@@ -383,70 +383,8 @@ def reconstruct_user_flow_analysis(data: dict[str, Any] | None, form_name: str) 
         primary_actors=data.get("primary_actors", []),
         entry_points=data.get("entry_points", []),
         exit_points=data.get("exit_points", []),
-        cross_module_flows=data.get("cross_module_flows", []),
         user_journey_map=data.get("user_journey_map", ""),
         flow_diagram_mermaid=data.get("flow_diagram_mermaid", ""),
-    )
-
-
-def reconstruct_risk_analysis(data: dict[str, Any] | None, form_name: str) -> Any:
-    """
-    Reconstruct RiskAnalysisResult from serialized dict.
-
-    Args:
-        data: Serialized risk analysis data
-        form_name: Form name for the result
-
-    Returns:
-        RiskAnalysisResult or None
-    """
-    if not data or not data.get("success"):
-        return None
-
-    from src.agents.risk_analysis_agent import (
-        Risk,
-        RiskAnalysisResult,
-        RiskMatrix,
-    )
-
-    risks = [
-        Risk(
-            risk_id=risk.get("risk_id", ""),
-            title=risk.get("title", ""),
-            description=risk.get("description", ""),
-            category=risk.get("category", ""),
-            severity=risk.get("severity", ""),
-            likelihood=risk.get("likelihood", ""),
-            impact=risk.get("impact", ""),
-            affected_areas=risk.get("affected_areas", []),
-            mitigation_strategies=risk.get("mitigation_strategies", []),
-            contingency_plan=risk.get("contingency_plan", ""),
-            owner=risk.get("owner", ""),
-            status=risk.get("status", "identified"),
-        )
-        for risk in data.get("risks", [])
-    ]
-
-    risk_matrix_dict = data.get("risk_matrix", {})
-    risk_matrix = RiskMatrix(
-        critical_count=risk_matrix_dict.get("critical_count", 0),
-        high_count=risk_matrix_dict.get("high_count", 0),
-        medium_count=risk_matrix_dict.get("medium_count", 0),
-        low_count=risk_matrix_dict.get("low_count", 0),
-        risk_score=risk_matrix_dict.get("risk_score", 0.0),
-    )
-
-    return RiskAnalysisResult(
-        form_name=form_name,
-        risks=risks,
-        risk_matrix=risk_matrix,
-        top_risks=data.get("top_risks", []),
-        migration_complexity=data.get("migration_complexity", "medium"),
-        recommended_approach=data.get("recommended_approach", ""),
-        dependencies_risks=data.get("dependencies_risks", []),
-        technical_debt_items=data.get("technical_debt_items", []),
-        success_factors=data.get("success_factors", []),
-        executive_summary=data.get("executive_summary", ""),
     )
 
 

@@ -20,7 +20,6 @@ from src.agents.requirements_generator_agent import (
     RequirementsGeneratorAgent,
     RequirementsGeneratorResult,
 )
-from src.agents.risk_analysis_agent import RiskAnalysisAgent, RiskAnalysisResult
 from src.agents.screenshot_analysis_agent import (
     ScreenshotAnalysisAgent,
     ScreenshotAnalysisResult,
@@ -117,18 +116,17 @@ class PRDGenerator:
                 agent_metrics["screenshot_analysis"] = screenshot_result is not None
                 agent_metrics["jira_analysis"] = jira_result is not None
             
-            # Phase 4-6: Analysis phases
+            # Phase 4-5: Analysis phases
             req_result = await self._generate_requirements(context, code_files)
             flow_result = await self._analyze_user_flows(context, screenshot_result)
-            risk_result = await self._analyze_risks(context, req_result)
 
             agent_metrics.update(
-                self._collect_analysis_metrics(req_result, flow_result, risk_result)
+                self._collect_analysis_metrics(req_result, flow_result)
             )
             
-            # Phase 7: Aggregate PRD
+            # Phase 6: Aggregate PRD
             prd_result = await self._aggregate_prd(
-                context, screenshot_result, jira_result, req_result, flow_result, risk_result
+                context, screenshot_result, jira_result, req_result, flow_result
             )
             
             if not prd_result.success or not prd_result.data:
@@ -178,7 +176,6 @@ class PRDGenerator:
         self,
         req_result: AgentResult[RequirementsGeneratorResult],
         flow_result: AgentResult[UserFlowResult],
-        risk_result: AgentResult[RiskAnalysisResult],
     ) -> dict[str, int]:
         """Collect metrics from analysis results."""
         return {
@@ -189,9 +186,6 @@ class PRDGenerator:
             ),
             "user_flows": (
                 len(flow_result.data.user_flows) if flow_result.success and flow_result.data else 0
-            ),
-            "risks_identified": (
-                len(risk_result.data.risks) if risk_result.success and risk_result.data else 0
             ),
         }
 
@@ -328,15 +322,6 @@ class PRDGenerator:
         )
         return await agent.analyze(context, screenshot_analysis=screenshot_analysis)
     
-    async def _analyze_risks(
-        self,
-        context: AgentContext,
-        requirements_result: AgentResult[RequirementsGeneratorResult],
-    ) -> AgentResult[RiskAnalysisResult]:
-        """Analyze migration risks."""
-        agent = RiskAnalysisAgent()
-        return await agent.analyze(context, requirements_analysis=requirements_result)
-    
     async def _aggregate_prd(
         self,
         context: AgentContext,
@@ -344,7 +329,6 @@ class PRDGenerator:
         jira_result: AgentResult[AtlassianIntegrationResult] | None,
         req_result: AgentResult[RequirementsGeneratorResult],
         flow_result: AgentResult[UserFlowResult],
-        risk_result: AgentResult[RiskAnalysisResult],
     ) -> AgentResult[PRDAggregatorResult]:
         """Aggregate all analysis results into PRD."""
         agent = PRDAggregatorAgent()
@@ -354,7 +338,6 @@ class PRDGenerator:
             atlassian_analysis=jira_result.data if jira_result else None,
             requirements_analysis=req_result.data if req_result.success else None,
             user_flow_analysis=flow_result.data if flow_result.success else None,
-            risk_analysis=risk_result.data if risk_result.success else None,
         )
     
     def _save_prd(

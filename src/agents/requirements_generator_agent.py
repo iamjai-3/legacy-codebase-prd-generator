@@ -19,6 +19,7 @@ from src.utils.sql_parser import (
     extract_table_references_from_java,
     parse_sql_files,
 )
+from src.utils.business_logic_extractor import extract_business_logic_summary
 
 
 @dataclass
@@ -192,10 +193,11 @@ class RequirementsGeneratorResult:
     source_tables: list[SourceTable]  # Database source tables from PRD docs
     database_mappings: list[DatabaseMapping]  # Entity-to-table mappings
     business_rules: list[str]
-    assumptions: list[str]
-    out_of_scope: list[str]
-    summary: str
-    code_references: dict[str, list[str]]  # category -> list of source files
+    assumptions: list[str] = field(default_factory=list)
+    out_of_scope: list[str] = field(default_factory=list)
+    summary: str = ""
+    code_references: dict[str, list[str]] = field(default_factory=dict)  # category -> list of source files
+    detailed_business_rules: list[dict[str, Any]] = field(default_factory=list)  # Detailed BRs with conditions
 
 
 class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
@@ -291,6 +293,11 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
 
             # Extract business rules
             business_rules = await self._extract_business_rules(context, kb_contexts)
+            
+            # Extract detailed business rules with conditions
+            detailed_business_rules = await self._extract_detailed_business_rules(
+                context, code_files, kb_contexts
+            )
 
             # Identify scope boundaries
             assumptions, out_of_scope = await self._identify_assumptions(context, functional_reqs)
@@ -316,6 +323,7 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
                 source_tables=source_tables,
                 database_mappings=database_mappings,
                 business_rules=business_rules,
+                detailed_business_rules=detailed_business_rules,
                 assumptions=assumptions,
                 out_of_scope=out_of_scope,
                 summary=summary,
@@ -341,6 +349,7 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         """Retrieve multiple types of context from the knowledge base.
 
         Uses targeted queries for legacy Java Swing/COBOL applications.
+        Enhanced with specific queries for DTOs, validation functions, and fleet operations.
         """
         contexts = {}
 
@@ -359,11 +368,37 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             "database_mapping": f"{form_name} table column field setData getData combo dropdown",
             # UI-specific queries
             "ui_components": f"{form_name} JPanel JButton JTable combo dropdown form field",
+            # NEW: Enhanced queries for complete extraction
+            "dto_models": f"{form_name} SubchaptersDTO ChapterDTO class fields properties getters setters",
+            "validation_functions": f"{form_name} doesChapterRecordExist doesSubChapterRecordExist validation check exists",
+            "configuration_checks": f"{form_name} usingSubChapters usingRepDefs configuration check flag",
+            "fleet_operations": f"{form_name} fleet parameter chapter subchapter fleet-specific",
+            "alert_rate_management": f"{form_name} alertLimit alertLimitLandings alertLimitDays removalAlertRate",
+            "field_mappings": f"{form_name} field code mapping WCHAPT W2CHSB WFLEET setData getData",
         }
 
         for key, query in queries.items():
             try:
-                results = self.retrieve_context(form_name, query, limit=10)
+                # Use metadata filtering for specific document types
+                doc_type_filter = None
+                chunk_type_filter = None
+                if key in ["dto_models", "validation_functions", "configuration_checks"]:
+                    doc_type_filter = "code"
+                    chunk_type_filter = "class_definition"
+                elif key in ["business_logic", "fleet_operations", "alert_rate_management"]:
+                    doc_type_filter = "code"
+                    chunk_type_filter = "business_logic"
+                
+                # Increase limit for complex modules (10-15 instead of 5)
+                limit = 15 if key in ["dto_models", "source_tables", "database_mapping", "business_logic"] else 10
+                
+                results = self.retrieve_context(
+                    form_name, 
+                    query, 
+                    limit=limit,
+                    doc_type=doc_type_filter,
+                    chunk_type=chunk_type_filter
+                )
                 contexts[key] = results
                 self.logger.debug(f"Retrieved {len(results)} contexts for {key}")
             except Exception as e:
@@ -378,16 +413,43 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         code_files: list[CodeFile] | None,
         kb_contexts: dict[str, list[str]],
     ) -> list[BusinessLogic]:
-        """Extract detailed business logic from source code."""
+        """Extract detailed business logic from source code.
+        
+        Uses a combination of:
+        1. Structured pattern extraction (validation rules, field mappings, etc.)
+        2. LLM-based analysis for complex business logic
+        """
         # Get relevant code snippets
         logic_code = self._extract_logic_code(code_files)
+        
+        # ENHANCEMENT: Add structured business logic extraction
+        structured_logic = ""
+        if code_files:
+            # Prioritize main form files
+            main_form_files = [cf for cf in code_files 
+                              if any(p in cf.path.lower() for p in ["options/le", "cschapter", "support.java"])]
+            
+            for cf in main_form_files[:5]:
+                extracted = extract_business_logic_summary(cf.content, cf.path)
+                if extracted and "No business logic" not in extracted:
+                    structured_logic += f"\n\n### Extracted from {cf.path}\n{extracted}"
+            
+            if structured_logic:
+                self.logger.info(
+                    f"Extracted structured business logic from {len(main_form_files)} main files",
+                    form_name=context.form_name,
+                )
+        
         kb_context = self.format_context_for_prompt(
             kb_contexts.get("business_logic", []) + kb_contexts.get("existing_prd", []),
             max_contexts=5,
         )
 
+        # Combine all sources for LLM analysis
+        combined_context = f"{logic_code}\n\n## STRUCTURED EXTRACTION:{structured_logic}\n\nKNOWLEDGE BASE:\n{kb_context}"
+        
         prompt = RequirementsPrompts.business_logic_extraction(
-            context.form_name, f"{logic_code}\n\nKNOWLEDGE BASE:\n{kb_context}"
+            context.form_name, combined_context
         )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -497,12 +559,31 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         code_files: list[CodeFile] | None,
         kb_contexts: dict[str, list[str]],
     ) -> list[DataRequirement]:
-        """Generate comprehensive data model requirements."""
+        """Generate comprehensive data model requirements with complete field extraction."""
         model_files = self._get_model_files(code_files)
         model_summary = self._build_model_summary(model_files)
-        db_context = self.format_context_for_prompt(kb_contexts.get("database", []), max_contexts=5)
-
-        prompt = RequirementsPrompts.data_requirements(context.form_name, model_summary, db_context)
+        db_context = self.format_context_for_prompt(kb_contexts.get("database", []), max_contexts=8)
+        
+        # Extract DTO code for complete field extraction
+        dto_code = self._extract_dto_code(model_files)
+        
+        # Get normalized schema from knowledge base
+        normalized_schema_context = self.format_context_for_prompt(
+            kb_contexts.get("source_tables", []) + kb_contexts.get("database", []),
+            max_contexts=10
+        )
+        
+        # Try to find normalized schema SQL
+        normalized_schema = self._extract_normalized_schema(normalized_schema_context)
+        
+        # Use enhanced prompt if we have DTO code and normalized schema
+        if dto_code and normalized_schema:
+            prompt = RequirementsPrompts.data_requirements_complete(
+                context.form_name, dto_code, normalized_schema, model_summary
+            )
+        else:
+            # Fallback to standard prompt
+            prompt = RequirementsPrompts.data_requirements(context.form_name, model_summary, db_context)
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
 
@@ -522,6 +603,35 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             )
             for r in data
         ]
+    
+    def _extract_dto_code(self, model_files: list[CodeFile]) -> str:
+        """Extract DTO class code for complete field extraction."""
+        if not model_files:
+            return ""
+        
+        dto_files = [cf for cf in model_files if "DTO" in cf.path or "dto" in cf.path.lower()]
+        
+        if not dto_files:
+            return ""
+        
+        # Combine DTO file contents
+        dto_code_parts = []
+        for dto_file in dto_files[:5]:  # Limit to 5 DTO files
+            dto_code_parts.append(f"// File: {dto_file.path}\n{dto_file.content[:8000]}")
+        
+        return "\n\n".join(dto_code_parts)
+    
+    def _extract_normalized_schema(self, context: str) -> str:
+        """Extract normalized schema SQL from context."""
+        # Look for CREATE TABLE statements
+        import re
+        create_table_pattern = r'CREATE TABLE[^;]+;'
+        matches = re.findall(create_table_pattern, context, re.IGNORECASE | re.DOTALL)
+        
+        if matches:
+            return "\n\n".join(matches[:10])  # Limit to 10 tables
+        
+        return ""
 
     async def _extract_validation_rules(
         self,
@@ -635,9 +745,25 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
 
         # PRIORITY 1: Parse actual SQL DDL files from code
         if code_files:
+            # Log file types for debugging
+            sql_files = [cf for cf in code_files if cf.path.lower().endswith('.sql')]
+            java_files = [cf for cf in code_files if cf.path.lower().endswith('.java')]
+            
+            self.logger.info(
+                f"Source tables extraction: total={len(code_files)}, sql_files={len(sql_files)}, java_files={len(java_files)}",
+                form_name=context.form_name,
+            )
+            
+            # Log SQL file paths for debugging
+            if sql_files:
+                self.logger.info(
+                    f"SQL files found: {[cf.path for cf in sql_files[:10]]}",
+                    form_name=context.form_name,
+                )
+            
             parsed_tables = parse_sql_files(code_files)
             self.logger.info(
-                f"Parsed {len(parsed_tables)} tables from SQL files",
+                f"Parsed {len(parsed_tables)} tables from SQL files: {[pt.table_name for pt in parsed_tables]}",
                 form_name=context.form_name,
             )
 
@@ -903,10 +1029,73 @@ Focus on:
 - State transition rules
 - Data integrity rules
 - Workflow triggers
+- Fleet-specific validation rules
+- Configuration flag behavior (usingSubChapters, usingRepDefs)
+- Subchapter configuration requirements
 
 Be SPECIFIC - include actual values, field names, and conditions from the source."""
 
         return await self.invoke_llm_for_list(context, prompt, prefix="BR-")
+    
+    async def _extract_detailed_business_rules(
+        self, 
+        context: AgentContext, 
+        code_files: list[CodeFile] | None,
+        kb_contexts: dict[str, list[str]]
+    ) -> list[dict[str, Any]]:
+        """Extract business rules with full descriptions and conditions."""
+        if not code_files:
+            return []
+        
+        # Extract business logic from code
+        business_logic_code = self._extract_logic_code(code_files)
+        
+        # Get context from knowledge base
+        kb_context = self.format_context_for_prompt(
+            kb_contexts.get("business_logic", []) + 
+            kb_contexts.get("validation_functions", []) +
+            kb_contexts.get("configuration_checks", []),
+            max_contexts=10
+        )
+        
+        prompt = f"""Extract detailed business rules from the code for "{context.form_name}".
+
+CODE:
+{business_logic_code}
+
+KNOWLEDGE BASE:
+{kb_context}
+
+For each business rule, provide:
+1. Rule ID (BR-XXX)
+2. Title
+3. Detailed description with exact conditions
+4. Trigger conditions
+5. Actions taken
+6. Source location (file:line)
+
+Return as JSON array:
+[
+    {{
+        "rule_id": "BR-001",
+        "title": "Chapter Code Existence Validation",
+        "description": "Before creating a subchapter, the system must verify that the parent chapter exists using doesChapterRecordExist()",
+        "condition": "doesChapterRecordExist(chapter) returns false",
+        "action": "Show error message and prevent subchapter creation",
+        "trigger": "User attempts to create subchapter",
+        "source_location": "csChapterSupport.java:129-152"
+    }}
+]
+
+Extract ALL business rules including:
+- Validation functions (doesChapterRecordExist, doesSubChapterRecordExist)
+- Configuration checks (usingSubChapters, usingRepDefs)
+- Fleet-specific rules
+- Alert rate validations
+- Field dependency rules"""
+
+        data = extract_json_array(await self.invoke_llm(context, prompt))
+        return data
 
     async def _identify_assumptions(
         self, context: AgentContext, functional_reqs: list[FunctionalRequirement]
@@ -1007,18 +1196,42 @@ Be specific to this module, not generic."""
         return "\n".join(parts)
 
     def _extract_logic_code(self, code_files: list[CodeFile] | None) -> str:
-        """Extract code snippets containing business logic."""
+        """Extract code snippets containing business logic.
+        
+        Prioritizes main form files and includes more content for accurate extraction.
+        """
         if not code_files:
             return "No code available."
 
-        logic_keywords = ["if ", "else", "switch", "case", "calculate", "validate", "process"]
-        snippets = []
-
+        logic_keywords = [
+            "if ", "else", "switch", "case", "calculate", "validate", "process",
+            "save", "update", "delete", "insert", "setData", "getData",
+            "actionPerformed", "setEnabled", "setMandatory", "showMessage", "setInfo"
+        ]
+        
+        # Prioritize main form and support files
+        priority_patterns = ["options/le", "csChapter", "Support.java", "Service.java"]
+        
+        priority_files = []
+        other_files = []
+        
         for cf in code_files:
             if cf.content and any(kw in cf.content.lower() for kw in logic_keywords):
-                snippets.append(f"// File: {cf.path}\n{cf.content[:1500]}")
+                # Check if this is a priority file (main form or support class)
+                is_priority = any(p.lower() in cf.path.lower() for p in priority_patterns)
+                if is_priority:
+                    priority_files.append(cf)
+                else:
+                    other_files.append(cf)
+        
+        # Combine with priority files first
+        all_files = priority_files + other_files
+        
+        snippets = []
+        for cf in all_files[:20]:  # Increased from 5 to 20 files
+            snippets.append(f"// File: {cf.path}\n{cf.content[:8000]}")  # Increased from 1500 to 8000 chars
 
-        return "\n\n".join(snippets[:5]) if snippets else "No logic code found."
+        return "\n\n".join(snippets) if snippets else "No logic code found."
 
     def _get_service_code(self, code_files: list[CodeFile] | None) -> str:
         """Get service/controller layer code."""
@@ -1075,14 +1288,34 @@ Be specific to this module, not generic."""
         if not code_files:
             return "No code available."
 
-        keywords = ["validate", "validation", "required", "pattern", "check", "error"]
-        snippets = []
-
+        # Enhanced keywords to capture Java Swing validation patterns
+        keywords = [
+            "validate", "validation", "required", "pattern", "check", "error",
+            "setMandatory", "isMandated", "showMessage", "setInfo", "JOptionPane",
+            "parseInt", "parseDouble", "format", "must be", "cannot be", "invalid",
+            "alertLimit", "exclusion", "equals", "trim().equals"
+        ]
+        
+        # Prioritize main form files
+        priority_patterns = ["options/le", "Support.java", "Combo.java"]
+        priority_files = []
+        other_files = []
+        
         for cf in code_files:
             if cf.content and any(kw in cf.content.lower() for kw in keywords):
-                snippets.append(f"// File: {cf.path}\n{cf.content[:1500]}")
+                is_priority = any(p.lower() in cf.path.lower() for p in priority_patterns)
+                if is_priority:
+                    priority_files.append(cf)
+                else:
+                    other_files.append(cf)
+        
+        all_files = priority_files + other_files
+        snippets = []
+        
+        for cf in all_files[:15]:  # Increased from 5 to 15
+            snippets.append(f"// File: {cf.path}\n{cf.content[:6000]}")  # Increased from 1500 to 6000
 
-        return "\n\n".join(snippets[:5]) if snippets else "No validation code found."
+        return "\n\n".join(snippets) if snippets else "No validation code found."
 
     def _extract_workflow_code(self, code_files: list[CodeFile] | None) -> str:
         """Extract workflow/state machine code."""
@@ -1142,8 +1375,85 @@ Be specific to this module, not generic."""
 
         return "\n".join(findings) if findings else "No specific NFR patterns detected."
 
+    async def _generate_validation_config_requirements(
+        self,
+        context: AgentContext,
+        code_files: list[CodeFile] | None,
+        kb_contexts: dict[str, list[str]],
+    ) -> list[FunctionalRequirement]:
+        """Generate functional requirements for validation functions and configuration checks."""
+        validation_code = self._extract_validation_code(code_files)
+        config_context = self.format_context_for_prompt(
+            kb_contexts.get("validation_functions", []) + 
+            kb_contexts.get("configuration_checks", []),
+            max_contexts=8
+        )
+        
+        prompt = f"""Extract validation and configuration functional requirements from the code for "{context.form_name}".
+
+CODE:
+{validation_code}
+
+CONTEXT:
+{config_context}
+
+Generate functional requirements for:
+1. Validation functions (doesChapterRecordExist, doesSubChapterRecordExist)
+2. Configuration checks (usingSubChapters, usingRepDefs)
+3. Fleet-specific validation
+4. Alert rate management
+
+Return as JSON array:
+[
+    {{
+        "req_id": "FR-011",
+        "title": "Validate Chapter Exists",
+        "description": "System must validate that a chapter record exists before allowing operations that reference it",
+        "priority": "P0",
+        "category": "validation",
+        "business_logic": "Call doesChapterRecordExist(chapter). If returns false, show error and prevent operation",
+        "source_methods": ["csChapterSupport.doesChapterRecordExist(String chapter)"],
+        "api_specification": {{}},
+        "database_operations": [{{"operation": "SELECT", "table": "CHAPTERS", "columns": ["CHAPTER"]}}],
+        "validation_rules": ["Chapter code must exist in CHAPTERS table"],
+        "calculations": [],
+        "user_story": "As a user, I want the system to validate chapter existence so that invalid references are prevented",
+        "acceptance_criteria": [
+            "Given invalid chapter code, When operation is attempted, Then error is shown",
+            "Given valid chapter code, When operation is attempted, Then operation proceeds"
+        ],
+        "dependencies": [],
+        "source_files": ["csChapterSupport.java:129-152"]
+    }}
+]
+
+Include ALL validation and configuration functions found in the code."""
+
+        data = extract_json_array(await self.invoke_llm(context, prompt))
+        
+        return [
+            FunctionalRequirement(
+                req_id=r.get("req_id", f"FR-{i+11:03d}"),
+                title=r.get("title", ""),
+                description=r.get("description", ""),
+                priority=r.get("priority", "P1"),
+                category=r.get("category", "validation"),
+                business_logic=r.get("business_logic", ""),
+                source_methods=r.get("source_methods", []),
+                api_specification=r.get("api_specification", {}),
+                database_operations=r.get("database_operations", []),
+                validation_rules=r.get("validation_rules", []),
+                calculations=r.get("calculations", []),
+                user_story=r.get("user_story", ""),
+                acceptance_criteria=r.get("acceptance_criteria", []),
+                dependencies=r.get("dependencies", []),
+                source_files=r.get("source_files", []),
+            )
+            for i, r in enumerate(data, 1)
+        ]
+    
     def _compile_code_references(self, code_files: list[CodeFile] | None) -> dict[str, list[str]]:
-        """Compile code references by category."""
+        """Compile code references by category with line numbers."""
         if not code_files:
             return {}
 
@@ -1152,6 +1462,7 @@ Be specific to this module, not generic."""
             category = cf.file_type
             if category not in references:
                 references[category] = []
+            # Include path with potential line number info
             references[category].append(cf.path)
 
         return references

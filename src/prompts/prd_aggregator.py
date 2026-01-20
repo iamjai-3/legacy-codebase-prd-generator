@@ -53,25 +53,30 @@ Be SPECIFIC - use actual feature names, user roles, and business terms from the 
     @staticmethod
     def business_logic_section(form_name: str, logic_data: str, kb_context: str) -> str:
         """Prompt for generating detailed business logic documentation."""
-        return f"""Document ALL business logic for "{form_name}" in a format suitable for migration.
+        return f"""Document ALL business logic for "{form_name}" for developer migration.
 
-EXTRACTED BUSINESS LOGIC:
+EXTRACTED BUSINESS LOGIC FROM CODE:
 {logic_data}
 
 KNOWLEDGE BASE CONTEXT:
 {kb_context}
 
-For each piece of business logic, document:
-1. **Trigger**: What initiates this logic (user action, event, scheduled task)
-2. **Inputs**: All input parameters with types and valid values
-3. **Processing Steps**: Step-by-step algorithm in pseudocode
-4. **Conditions**: All if/else branches with exact conditions
-5. **Calculations**: Formulas with variable names and operators
-6. **Outputs**: What is returned or stored, with exact format
-7. **Error Cases**: What can go wrong and how it's handled
-8. **Source Reference**: Original code location
+For EACH business logic rule, document in this format:
 
-Format as clear, implementable specifications that a developer can code directly from."""
+### BL-XXX: [Rule Name]
+- **Trigger**: User clicks Save / Field loses focus / etc.
+- **Condition**: `if (alertLimitDays == 0 && alertLimitLandings == 0)`  
+- **Action**: Show error "Both alert limits cannot be zero"
+- **Inputs**: List fields involved with data types
+- **Outputs**: What gets saved/updated/returned
+
+IMPORTANT:
+- Use ACTUAL field names from the code (e.g., alertLimitDays, NOT "alert limit days")
+- Include EXACT validation messages from the code
+- Document EVERY if/else branch and switch case
+- Include database operations (INSERT/UPDATE/DELETE with table names)
+
+Do NOT use generic descriptions. Use SPECIFIC code references."""
 
     @staticmethod
     def api_specification_section(form_name: str, api_data: str, kb_context: str) -> str:
@@ -288,3 +293,43 @@ Include these sections:
 9. **Risk Mitigation**: Specific risks and mitigation strategies
 
 Be specific to this module's characteristics, not generic advice."""
+
+    @staticmethod
+    def migration_mapping_section(
+        form_name: str, data_requirements: str, normalized_schema: str
+    ) -> str:
+        """Prompt for generating field mapping and migration guide section."""
+        return f"""Create a comprehensive field mapping and migration guide for "{form_name}".
+
+DATA REQUIREMENTS:
+{data_requirements}
+
+NORMALIZED SCHEMA:
+{normalized_schema}
+
+Generate a complete migration mapping section that includes:
+
+1. **Field Mapping Tables**: For each entity, create a table showing:
+   - Legacy Field (from DTO class)
+   - Legacy Type (Java type)
+   - Legacy Column (from legacy table, if known)
+   - Normalized Field (normalized column name)
+   - Normalized Type (PostgreSQL type)
+   - Normalized Column (actual column name)
+   - Transformation Rule (how to convert: direct mapping, lookup, new field, etc.)
+   - Default Value (for new fields)
+
+2. **Primary Key Transformation**: Document how composite VARCHAR keys are transformed to INTEGER IDs
+
+3. **Migration Steps**: Step-by-step guide including:
+   - Data analysis and preparation
+   - Schema creation/verification
+   - Key transformation (if applicable)
+   - Data migration
+   - Validation
+
+4. **Validation Checklist**: Pre-migration validation requirements
+
+5. **Rollback Procedures**: How to revert if migration fails
+
+Be SPECIFIC - use actual field names, table names, and transformation rules from the data requirements above."""

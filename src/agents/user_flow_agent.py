@@ -51,7 +51,6 @@ class UserFlowResult:
     primary_actors: list[str]
     entry_points: list[str]
     exit_points: list[str]
-    cross_module_flows: list[str]
     user_journey_map: str
     flow_diagram_mermaid: str
 
@@ -112,7 +111,6 @@ class UserFlowAgent(BaseAgent[UserFlowResult]):
             user_flows = await self._generate_user_flows(
                 context, primary_actors, entry_points, stored_context
             )
-            cross_module_flows = await self._identify_cross_module_flows(context, stored_context)
             journey_map = await self._generate_journey_map(context, user_flows)
             flow_diagram = await self._generate_flow_diagram(context, user_flows)
 
@@ -122,7 +120,6 @@ class UserFlowAgent(BaseAgent[UserFlowResult]):
                 primary_actors=primary_actors,
                 entry_points=entry_points,
                 exit_points=exit_points,
-                cross_module_flows=cross_module_flows,
                 user_journey_map=journey_map,
                 flow_diagram_mermaid=flow_diagram,
             )
@@ -300,26 +297,6 @@ Include:
             success_criteria=flow_data.get("success_criteria", ""),
             estimated_time=flow_data.get("estimated_time", "N/A"),
         )
-
-    async def _identify_cross_module_flows(
-        self, context: AgentContext, stored_context: list[str]
-    ) -> list[str]:
-        """Identify flows that span multiple modules."""
-        context_text = self.format_context_for_prompt(stored_context, max_contexts=5)
-
-        prompt = f"""For "{context.form_name}", identify any cross-module workflows:
-
-{context_text}
-
-List workflows that:
-- Start in this module and continue elsewhere
-- Start elsewhere and involve this module
-- Require data from other modules
-
-Format: [Module A] -> [Module B]: Description"""
-
-        items = await self.invoke_llm_for_list(context, prompt)
-        return [item for item in items if "->" in item or "→" in item]
 
     async def _generate_journey_map(self, context: AgentContext, user_flows: list[UserFlow]) -> str:
         """Generate a textual user journey map."""

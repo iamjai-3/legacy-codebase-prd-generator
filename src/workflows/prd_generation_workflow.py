@@ -374,7 +374,6 @@ class PRDGenerationWorkflow:
                 self._result_if_success(analysis["screenshot"]),
                 self._result_if_success(requirements),
                 self._result_if_success(user_flow),
-                None,  # No risk analysis
             ],
             **opts,
         )

@@ -332,6 +332,11 @@ def parse_sql_files(code_files: list[Any]) -> list[ParsedTable]:
     """
     Parse all SQL files from a list of code files.
 
+    This function checks for SQL files in multiple ways:
+    1. By language attribute == 'sql'
+    2. By file extension ending in .sql
+    3. By content containing CREATE TABLE statements
+
     Args:
         code_files: List of CodeFile objects
 
@@ -340,11 +345,32 @@ def parse_sql_files(code_files: list[Any]) -> list[ParsedTable]:
     """
     parser = SQLDDLParser()
     all_tables = []
+    processed_paths = set()  # Avoid duplicates
 
     for cf in code_files:
-        if hasattr(cf, "language") and cf.language == "sql":
-            tables = parser.parse_create_table(cf.content, cf.path)
-            all_tables.extend(tables)
+        # Skip if already processed
+        path = getattr(cf, "path", "") or ""
+        if path in processed_paths:
+            continue
+        
+        content = getattr(cf, "content", "") or ""
+        language = getattr(cf, "language", "") or ""
+        
+        # Check if this is a SQL file by:
+        # 1. Language attribute is 'sql'
+        # 2. File path ends with .sql
+        # 3. Content contains CREATE TABLE
+        is_sql_file = (
+            language.lower() == "sql" 
+            or path.lower().endswith(".sql")
+            or "CREATE TABLE" in content.upper()
+        )
+        
+        if is_sql_file and content:
+            tables = parser.parse_create_table(content, path)
+            if tables:
+                all_tables.extend(tables)
+                processed_paths.add(path)
 
     return all_tables
 

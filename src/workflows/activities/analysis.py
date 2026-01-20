@@ -7,7 +7,6 @@ from temporalio import activity
 from src.agents.atlassian_integration_agent import AtlassianIntegrationAgent
 from src.agents.base_agent import AgentContext
 from src.agents.requirements_generator_agent import RequirementsGeneratorAgent
-from src.agents.risk_analysis_agent import RiskAnalysisAgent
 from src.agents.screenshot_analysis_agent import ScreenshotAnalysisAgent
 from src.agents.user_flow_agent import UserFlowAgent
 from src.utils.data_reconstruction import reconstruct_code_files, reconstruct_screenshots
@@ -154,47 +153,8 @@ async def analyze_user_flows_activity(
             "primary_actors": result.data.primary_actors,
             "entry_points": result.data.entry_points,
             "exit_points": result.data.exit_points,
-            "cross_module_flows": result.data.cross_module_flows,
             "user_journey_map": result.data.user_journey_map,
             "flow_diagram_mermaid": result.data.flow_diagram_mermaid,
-            "execution_time_ms": result.execution_time_ms,
-        }
-
-    return {
-        "success": False,
-        "error": result.error,
-        "execution_time_ms": result.execution_time_ms,
-    }
-
-
-@activity.defn
-async def analyze_risks_activity(
-    form_name: str,
-    code_analysis: dict[str, Any] | None = None,
-    requirements_analysis: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Analyze risks using the RiskAnalysisAgent."""
-    logger.info("Starting risk analysis", form_name=form_name)
-
-    agent = RiskAnalysisAgent()
-    context = AgentContext(form_name=form_name)
-
-    result = await agent.analyze(
-        context, code_analysis=code_analysis, requirements_analysis=requirements_analysis
-    )
-
-    if result.success and result.data:
-        return {
-            "success": True,
-            "risks": [to_dict(r) for r in result.data.risks],
-            "risk_matrix": to_dict(result.data.risk_matrix),
-            "top_risks": result.data.top_risks,
-            "migration_complexity": result.data.migration_complexity,
-            "recommended_approach": result.data.recommended_approach,
-            "dependencies_risks": result.data.dependencies_risks,
-            "technical_debt_items": result.data.technical_debt_items,
-            "success_factors": result.data.success_factors,
-            "executive_summary": result.data.executive_summary,
             "execution_time_ms": result.execution_time_ms,
         }
 

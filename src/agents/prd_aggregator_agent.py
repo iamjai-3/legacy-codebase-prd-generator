@@ -265,13 +265,22 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 )
                 section_order += 1
 
-            # 9. Non-Functional Requirements
+            # 9. Migration Mapping & Guide section (NEW)
+            if requirements_analysis.data_requirements:
+                sections.append(
+                    await self._generate_migration_mapping_section(
+                        context, requirements_analysis, kb_contexts, section_order
+                    )
+                )
+                section_order += 1
+
+            # 10. Non-Functional Requirements
             sections.append(
                 await self._generate_nfr_section(context, requirements_analysis, section_order)
             )
             section_order += 1
 
-            # 10. Business Rules section
+            # 11. Business Rules section
             sections.append(
                 await self._generate_business_rules_section(
                     context, requirements_analysis, section_order
@@ -279,14 +288,14 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             )
             section_order += 1
 
-        # 11. User Flows section (if available)
+        # 12. User Flows section (if available)
         if user_flow_analysis:
             sections.append(
                 await self._generate_user_flow_section(context, user_flow_analysis, section_order)
             )
             section_order += 1
 
-            # 12. Workflow specifications (NEW - from requirements)
+            # 13. Workflow specifications (from requirements)
             if requirements_analysis and requirements_analysis.workflow_specs:
                 sections.append(
                     await self._generate_workflow_section(
@@ -295,12 +304,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 )
                 section_order += 1
 
-        # 13. Migration Strategy section (always included)
-        sections.append(
-            await self._generate_migration_section(
-                context, requirements_analysis, kb_contexts, section_order
-            )
-        )
+        # Migration Strategy section removed - focus on actionable specs for developers
 
         return sections
 
@@ -504,6 +508,42 @@ Based on Jira analysis:
 
         return PRDSection(title=f"{order}. User Interface", content=content, order=order)
 
+    def _format_business_logic_inputs(self, inputs: list) -> str:
+        """Format business logic inputs."""
+        content = "\n**Inputs:**\n"
+        for inp in inputs:
+            if isinstance(inp, dict):
+                content += f"- `{inp.get('name', 'N/A')}` ({inp.get('type', 'unknown')}): {inp.get('source', 'N/A')}\n"
+            elif isinstance(inp, str):
+                content += f"- {inp}\n"
+            else:
+                content += f"- {str(inp)}\n"
+        return content
+
+    def _format_business_logic_conditions(self, conditions: list) -> str:
+        """Format business logic conditional logic."""
+        content = "\n**Conditional Logic:**\n"
+        for cond in conditions:
+            if isinstance(cond, dict):
+                content += f"- IF `{cond.get('condition', '')}` THEN {cond.get('true_action', '')} ELSE {cond.get('false_action', '')}\n"
+            elif isinstance(cond, str):
+                content += f"- {cond}\n"
+            else:
+                content += f"- {str(cond)}\n"
+        return content
+
+    def _format_business_logic_outputs(self, outputs: list) -> str:
+        """Format business logic outputs."""
+        content = "\n**Outputs:**\n"
+        for out in outputs:
+            if isinstance(out, dict):
+                content += f"- `{out.get('name', 'N/A')}` ({out.get('type', 'unknown')}): {out.get('destination', 'N/A')}\n"
+            elif isinstance(out, str):
+                content += f"- {out}\n"
+            else:
+                content += f"- {str(out)}\n"
+        return content
+
     async def _generate_business_logic_section(
         self,
         context: AgentContext,
@@ -527,48 +567,17 @@ Each item includes trigger conditions, processing steps, and expected outputs.
 **Description:** {bl.description}
 
 **Trigger:** {bl.trigger}
-
-**Inputs:**
 """
-            for inp in bl.inputs:
-                if isinstance(inp, dict):
-                    content += f"- `{inp.get('name', 'N/A')}` ({inp.get('type', 'unknown')}): {inp.get('source', 'N/A')}\n"
-                elif isinstance(inp, str):
-                    # Handle case where input is a string instead of a dict
-                    content += f"- {inp}\n"
-                else:
-                    # Handle other types
-                    content += f"- {str(inp)}\n"
+            content += self._format_business_logic_inputs(bl.inputs)
 
             content += "\n**Processing Steps:**\n"
             for i, step in enumerate(bl.steps, 1):
                 content += f"{i}. {step}\n"
 
             if bl.conditions:
-                content += "\n**Conditional Logic:**\n"
-                for cond in bl.conditions:
-                    if isinstance(cond, dict):
-                        content += f"- IF `{cond.get('condition', '')}` THEN {cond.get('true_action', '')} ELSE {cond.get('false_action', '')}\n"
-                    elif isinstance(cond, str):
-                        # Handle case where condition is a string instead of a dict
-                        content += f"- {cond}\n"
-                    else:
-                        # Handle other types
-                        content += f"- {str(cond)}\n"
+                content += self._format_business_logic_conditions(bl.conditions)
 
-            content += "\n**Outputs:**\n"
-            for out in bl.outputs:
-                if isinstance(out, dict):
-                    content += f"- `{out.get('name', 'N/A')}` ({out.get('type', 'unknown')}): {out.get('destination', 'N/A')}\n"
-                elif isinstance(out, str):
-                    # Handle case where output is a string instead of a dict
-                    content += f"- {out}\n"
-                else:
-                    # Handle other types
-                    content += f"- {str(out)}\n"
-
-            if bl.source_location:
-                content += f"\n**Source Reference:** `{bl.source_location}`\n"
+            content += self._format_business_logic_outputs(bl.outputs)
 
             content += SECTION_SEPARATOR
 
@@ -679,10 +688,6 @@ request/response schemas suitable for implementation in any framework.
             content += (
                 f"\n**Calculations:**\n{chr(10).join(['- ' + c for c in req.calculations])}\n"
             )
-        if req.source_files:
-            content += (
-                f"\n**Source References:** {', '.join(['`' + f + '`' for f in req.source_files])}\n"
-            )
         content += (
             f"\n**Dependencies:** {', '.join(req.dependencies) if req.dependencies else 'None'}\n"
         )
@@ -735,14 +740,14 @@ request/response schemas suitable for implementation in any framework.
         for entity in data_requirements[:10]:
             entity_name = entity.entity_name.replace(" ", "_")
             content += f"    {entity_name} {{\n"
-            for field in entity.fields[:10]:
+            for field_item in entity.fields[:10]:
                 # Handle both dict and string cases
-                if isinstance(field, dict):
-                    field_type = str(field.get("type", "string")).replace(" ", "_")
-                    field_name = str(field.get("name", "field")).replace(" ", "_")
+                if isinstance(field_item, dict):
+                    field_type = str(field_item.get("type", "string")).replace(" ", "_")
+                    field_name = str(field_item.get("name", "field")).replace(" ", "_")
                 else:
                     field_type = "string"
-                    field_name = str(field).replace(" ", "_")
+                    field_name = str(field_item).replace(" ", "_")
                 content += f"        {field_type} {field_name}\n"
             content += "    }\n"
 
@@ -767,8 +772,45 @@ request/response schemas suitable for implementation in any framework.
             return f'    {entity_name} ||--o{{ {target} : ""\n'
         return f'    {entity_name} }}o--|| {target} : ""\n'
 
+    def _format_entity_field_row(self, field) -> str:
+        """Format a single field row for entity specification."""
+        if isinstance(field, dict):
+            field_name = field.get("name", field.get("normalized_column", ""))
+            field_type = field.get("normalized_type", field.get("type", field.get("java_type", "")))
+            constraints = (
+                ", ".join(field.get("constraints", [])) if field.get("constraints") else "—"
+            )
+            description = field.get("description", "")
+            # Include transformation info in description if available
+            if field.get("transformation") and field.get("transformation") != "Direct mapping":
+                description += f" (Transformation: {field.get('transformation')})"
+            return f"| `{field_name}` | {field_type} | {constraints} | {description} |\n"
+        else:
+            return f"| `{str(field)}` | — | — | — |\n"
+
+    def _format_entity_fields_table(self, entity) -> str:
+        """Format the fields table for entity specification."""
+        content = "| Column | Type | Constraints | Description |\n"
+        content += "|--------|------|-------------|-------------|\n"
+        if entity.fields:
+            for field in entity.fields:
+                content += self._format_entity_field_row(field)
+        else:
+            content += "| *No fields extracted* | — | — | — |\n"
+        return content
+
+    def _format_entity_primary_key(self, entity) -> str:
+        """Format primary key information for entity."""
+        if not entity.primary_key:
+            return ""
+        content = f"\n**Primary Key:** {', '.join(['`' + k + '`' for k in entity.primary_key])}\n"
+        # Add note about key transformation if applicable
+        if len(entity.primary_key) == 1 and "id" in entity.primary_key[0].lower():
+            content += "\n**Note:** Normalized schema uses INTEGER ID. Legacy may use composite VARCHAR keys.\n"
+        return content
+
     def _format_entity_specification(self, entity) -> str:
-        """Format entity specification."""
+        """Format entity specification with ALL fields."""
         content = f"""
 #### {entity.entity_name}
 
@@ -778,24 +820,10 @@ request/response schemas suitable for implementation in any framework.
 **Source Class:** `{entity.source_class or 'N/A'}`
 
 **Schema:**
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
 """
-        for field in entity.fields:
-            # Handle both dict and string cases
-            if isinstance(field, dict):
-                constraints = (
-                    ", ".join(field.get("constraints", [])) if field.get("constraints") else "—"
-                )
-                content += f"| `{field.get('name', '')}` | {field.get('type', '')} | {constraints} | {field.get('description', '')} |\n"
-            else:
-                # Handle case where field is a string or other type
-                content += f"| `{str(field)}` | — | — | — |\n"
+        content += self._format_entity_fields_table(entity)
+        content += self._format_entity_primary_key(entity)
 
-        if entity.primary_key:
-            content += (
-                f"\n**Primary Key:** {', '.join(['`' + k + '`' for k in entity.primary_key])}\n"
-            )
         if entity.foreign_keys:
             content += self._format_entity_foreign_keys(entity.foreign_keys)
         if entity.indexes:
@@ -1088,8 +1116,6 @@ the exact condition and error message for implementation.
 
 **Description:** {rule.description}
 
-**Source Reference:** `{rule.source_location}`
-
 ---
 """
 
@@ -1133,37 +1159,66 @@ All external system integrations required for this module.
 
 **Data Mapping:**
 """
-            for mapping in integ.data_mapping:
-                # Handle both dict and string cases
-                if isinstance(mapping, dict):
-                    content += f"- `{mapping.get('source_field', 'N/A')}` → `{mapping.get('target_field', 'N/A')}`"
-                    if mapping.get("transformation"):
-                        content += f" (transform: {mapping.get('transformation')})"
-                else:
-                    content += f"- {mapping}"
-                content += "\n"
-
-            if integ.error_handling:
-                # Handle both dict and string cases
-                if isinstance(integ.error_handling, dict):
-                    content += f"""
-**Error Handling:**
-- Retry Policy: {integ.error_handling.get('retry_policy', 'N/A')}
-- Fallback: {integ.error_handling.get('fallback', 'N/A')}
-- Alerts: {integ.error_handling.get('alerts', 'N/A')}
-"""
-                else:
-                    content += f"""
-**Error Handling:**
-{integ.error_handling}
-"""
-
-            if integ.source_files:
-                content += f"\n**Source References:** {', '.join(['`' + f + '`' for f in integ.source_files])}\n"
-
-            content += SECTION_SEPARATOR
+            content += self._format_integration_detail(integ)
 
         return PRDSection(title=f"{order}. External Integrations", content=content, order=order)
+
+    def _format_integration_data_mapping(self, data_mapping: list) -> str:
+        """Format data mapping for integration."""
+        content = ""
+        for mapping in data_mapping:
+            if isinstance(mapping, dict):
+                content += f"- `{mapping.get('source_field', 'N/A')}` → `{mapping.get('target_field', 'N/A')}`"
+                if mapping.get("transformation"):
+                    content += f" (transform: {mapping.get('transformation')})"
+            else:
+                content += f"- {mapping}"
+            content += "\n"
+        return content
+
+    def _format_integration_error_handling(self, error_handling) -> str:
+        """Format error handling for integration."""
+        if isinstance(error_handling, dict):
+            return f"""
+**Error Handling:**
+- Retry Policy: {error_handling.get('retry_policy', 'N/A')}
+- Fallback: {error_handling.get('fallback', 'N/A')}
+- Alerts: {error_handling.get('alerts', 'N/A')}
+"""
+        else:
+            return f"""
+**Error Handling:**
+{error_handling}
+"""
+
+    def _format_integration_detail(self, integ) -> str:
+        """Format detailed integration specification."""
+        content = f"""
+#### {integ.integration_id}: {integ.name}
+
+**External System:** {integ.external_system}
+**Type:** {integ.integration_type}
+**Direction:** {integ.direction}
+
+**Purpose:** {integ.purpose}
+
+**Connection Specification:**
+```json
+{self._format_json_schema(integ.specification)}
+```
+
+**Data Mapping:**
+"""
+        if integ.data_mapping:
+            content += self._format_integration_data_mapping(integ.data_mapping)
+        else:
+            content += "- No data mapping specified\n"
+
+        if integ.error_handling:
+            content += self._format_integration_error_handling(integ.error_handling)
+
+        content += SECTION_SEPARATOR
+        return content
 
     async def _generate_nfr_section(
         self,
@@ -1198,24 +1253,97 @@ All external system integrations required for this module.
             title=f"{order}. Non-Functional Requirements", content=content, order=order
         )
 
+    def _format_detailed_business_rule(self, br: dict) -> str:
+        """Format a single detailed business rule."""
+        content = f"#### {br.get('rule_id', 'BR-XXX')}: {br.get('title', '')}\n\n"
+        content += f"**Description:** {br.get('description', '')}\n\n"
+        if br.get("condition"):
+            content += f"**Condition:** {br.get('condition')}\n\n"
+        if br.get("action"):
+            content += f"**Action:** {br.get('action')}\n\n"
+        if br.get("trigger"):
+            content += f"**Trigger:** {br.get('trigger')}\n\n"
+        content += SECTION_SEPARATOR
+        return content
+
+    def _format_simple_business_rule(self, rule) -> str:
+        """Format a simple business rule."""
+        if isinstance(rule, str):
+            # Check if rule has detailed format (BR-XXX: description)
+            if ":" in rule and rule.strip().startswith("BR-"):
+                parts = rule.split(":", 1)
+                rule_id = parts[0].strip()
+                rule_desc = parts[1].strip() if len(parts) > 1 else ""
+                return f"#### {rule_id}\n\n{rule_desc}\n\n"
+            else:
+                return f"- {rule}\n"
+        else:
+            return f"- {str(rule)}\n"
+
+    def _format_business_rules_list(
+        self, requirements_analysis: RequirementsGeneratorResult
+    ) -> str:
+        """Format the list of simple business rules."""
+        if not requirements_analysis.business_rules:
+            has_detailed = (
+                hasattr(requirements_analysis, "detailed_business_rules")
+                and requirements_analysis.detailed_business_rules
+            )
+            return "" if has_detailed else "No business rules extracted.\n"
+
+        content = ""
+        has_detailed = (
+            hasattr(requirements_analysis, "detailed_business_rules")
+            and requirements_analysis.detailed_business_rules
+        )
+        if has_detailed:
+            content += "\n### Additional Business Rules\n\n"
+
+        for rule in requirements_analysis.business_rules:
+            content += self._format_simple_business_rule(rule)
+
+        return content
+
     async def _generate_business_rules_section(
         self,
         context: AgentContext,
         requirements_analysis: RequirementsGeneratorResult,
         order: int,
     ) -> PRDSection:
-        """Generate the business rules section."""
-        content = f"""## Business Rules
+        """Generate the business rules section with detailed descriptions."""
+        content = """## Business Rules
 
 ### Extracted Business Rules
-{chr(10).join(["- " + r for r in requirements_analysis.business_rules])}
 
-### Assumptions
-{chr(10).join(["- " + a for a in requirements_analysis.assumptions]) if requirements_analysis.assumptions else "No assumptions documented."}
-
-### Out of Scope
-{chr(10).join(["- " + o for o in requirements_analysis.out_of_scope]) if requirements_analysis.out_of_scope else "No items explicitly out of scope."}
 """
+
+        # Format business rules with detailed descriptions if available
+        if (
+            hasattr(requirements_analysis, "detailed_business_rules")
+            and requirements_analysis.detailed_business_rules
+        ):
+            for br in requirements_analysis.detailed_business_rules:
+                if isinstance(br, dict):
+                    content += self._format_detailed_business_rule(br)
+
+        # Also include simple business rules list
+        content += self._format_business_rules_list(requirements_analysis)
+
+        content += "\n### Assumptions\n"
+        assumptions_text = (
+            chr(10).join(["- " + a for a in requirements_analysis.assumptions])
+            if requirements_analysis.assumptions
+            else "No assumptions documented."
+        )
+        content += f"{assumptions_text}\n"
+
+        content += "\n### Out of Scope\n"
+        out_of_scope_text = (
+            chr(10).join(["- " + o for o in requirements_analysis.out_of_scope])
+            if requirements_analysis.out_of_scope
+            else "No items explicitly out of scope."
+        )
+        content += f"{out_of_scope_text}\n"
 
         return PRDSection(title=f"{order}. Business Rules", content=content, order=order)
 
@@ -1283,9 +1411,6 @@ All external system integrations required for this module.
 ```mermaid
 {user_flow_analysis.flow_diagram_mermaid}
 ```
-
-### Cross-Module Flows
-{chr(10).join(["- " + f for f in user_flow_analysis.cross_module_flows])}
 """
 
         return PRDSection(title=f"{order}. User Flows", content=content, order=order)
@@ -1317,8 +1442,6 @@ stateDiagram-v2
             content += "```\n\n"
             content += self._format_workflow_states(wf.states)
             content += self._format_workflow_transitions(wf.transitions)
-            if wf.source_location:
-                content += f"\n**Source Reference:** `{wf.source_location}`\n"
 
             content += SECTION_SEPARATOR
 
@@ -1371,6 +1494,169 @@ stateDiagram-v2
             else:
                 content += f"| — | — | {str(trans)} | — | — |\n"
         return content
+
+    def _format_field_mapping_row(self, field) -> str:
+        """Format a single row in the field mapping table."""
+        if isinstance(field, dict):
+            legacy_field = field.get("name", "")
+            legacy_type = field.get("java_type", field.get("type", ""))
+            legacy_col = field.get("column", "N/A")
+            normalized_field = field.get("normalized_column", field.get("name", ""))
+            normalized_type = field.get("normalized_type", field.get("type", ""))
+            normalized_col = field.get("normalized_column", normalized_field)
+            transformation = field.get(
+                "transformation", field.get("normalized_column", "Direct mapping")
+            )
+            default_val = field.get("default", "NULL")
+            return f"| `{legacy_field}` | {legacy_type} | {legacy_col} | `{normalized_field}` | {normalized_type} | `{normalized_col}` | {transformation} | {default_val} |\n"
+        else:
+            return f"| `{str(field)}` | — | — | — | — | — | — | — |\n"
+
+    def _find_primary_key_transformation(self, entity) -> str | None:
+        """Find primary key transformation from business rules."""
+        if not entity.business_rules:
+            return None
+        for rule in entity.business_rules:
+            if (
+                isinstance(rule, str)
+                and "primary key" in rule.lower()
+                and "transformation" in rule.lower()
+            ):
+                return rule
+        return None
+
+    def _format_entity_field_mapping(self, entity) -> str:
+        """Format field mapping table for a single entity."""
+        content = f"### {entity.entity_name} Field Mapping\n\n"
+
+        # Create mapping table
+        if entity.fields:
+            content += "| Legacy Field | Legacy Type | Legacy Column | Normalized Field | Normalized Type | Normalized Column | Transformation | Default |\n"
+            content += "|--------------|------------|---------------|-----------------|----------------|------------------|----------------|----------|\n"
+
+            for field in entity.fields:
+                content += self._format_field_mapping_row(field)
+
+        # Primary key transformation
+        pk_transformation = self._find_primary_key_transformation(entity)
+        if pk_transformation:
+            content += f"\n**Primary Key Transformation:** {pk_transformation}\n"
+        elif entity.primary_key:
+            content += (
+                f"\n**Primary Key:** {', '.join(['`' + pk + '`' for pk in entity.primary_key])}\n"
+            )
+            # Add note about transformation if legacy uses composite keys
+            if len(entity.primary_key) > 1:
+                content += "\n**Note:** Legacy uses composite primary key. Normalized schema may use INTEGER ID.\n"
+
+        content += SECTION_SEPARATOR
+        return content
+
+    async def _generate_migration_mapping_section(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        kb_contexts: dict[str, list[str]],
+        order: int,
+    ) -> PRDSection:
+        """Generate field mapping and migration guide section."""
+        content = """## Field Mapping & Migration Guide
+
+This section provides complete field mappings from legacy DTO classes to normalized database schema, along with step-by-step migration instructions.
+
+"""
+
+        # Get normalized schema context
+        normalized_schema_context = self.format_context_for_prompt(
+            kb_contexts.get("source_tables", []) + kb_contexts.get("database", []), max_contexts=10
+        )
+
+        # Generate field mapping tables for each entity
+        for entity in requirements_analysis.data_requirements:
+            content += self._format_entity_field_mapping(entity)
+
+        # Add migration strategy
+        content += "\n### Migration Strategy\n\n"
+        content += self._generate_migration_strategy(
+            requirements_analysis, normalized_schema_context
+        )
+
+        # Add validation checklist
+        content += "\n### Pre-Migration Validation Checklist\n\n"
+        content += self._generate_validation_checklist(requirements_analysis)
+
+        # Add rollback procedures
+        content += "\n### Rollback Procedures\n\n"
+        content += self._generate_rollback_procedures(requirements_analysis)
+
+        return PRDSection(
+            title=f"{order}. Field Mapping & Migration Guide", content=content, order=order
+        )
+
+    def _generate_migration_strategy(
+        self, requirements_analysis: RequirementsGeneratorResult, normalized_schema_context: str
+    ) -> str:
+        """Generate migration strategy content."""
+        strategy = """#### Step 1: Data Analysis
+- Review legacy table structures and data
+- Identify all fields to be migrated
+- Document data quality issues
+- Create backup of legacy data
+
+#### Step 2: Schema Preparation
+- Ensure normalized tables exist with correct structure
+- Verify all foreign key reference tables are populated
+- Create lookup tables for key transformations (VARCHAR codes → INTEGER IDs)
+
+#### Step 3: Key Transformation
+- Create mapping tables for composite keys to integer IDs
+- Populate lookup tables from legacy data
+- Verify all legacy keys have corresponding IDs
+
+#### Step 4: Data Migration
+- Migrate data field by field according to mapping table
+- Apply transformations as specified
+- Set default values for new fields
+
+#### Step 5: Validation
+- Compare row counts between legacy and normalized
+- Validate foreign key relationships
+- Check for data type mismatches
+- Verify business rules are maintained
+"""
+        return strategy
+
+    def _generate_validation_checklist(
+        self, requirements_analysis: RequirementsGeneratorResult
+    ) -> str:
+        """Generate validation checklist."""
+        checklist = [
+            "All records migrated successfully",
+            "Row counts match between legacy and normalized",
+            "No data loss during migration",
+            "Foreign key constraints are satisfied",
+            "Primary key transformations completed correctly",
+            "No orphaned records in lookup tables",
+            "All business rules validated",
+            "Data types match normalized schema",
+        ]
+
+        return "\n".join([f"- [ ] {item}" for item in checklist])
+
+    def _generate_rollback_procedures(
+        self, requirements_analysis: RequirementsGeneratorResult
+    ) -> str:
+        """Generate rollback procedures."""
+        procedures = [
+            "Stop all writes to normalized tables",
+            "Restore normalized tables from backup (if backup was taken)",
+            "Or truncate normalized tables if migration needs to be restarted",
+            "Verify legacy system is still functional",
+            "Document rollback reason and issues encountered",
+            "Review and fix issues before retrying migration",
+        ]
+
+        return "\n".join([f"1. {proc}" for proc in procedures])
 
     async def _generate_migration_section(
         self,
@@ -1476,15 +1762,7 @@ stateDiagram-v2
         """Generate appendix content with code references."""
         appendices = []
 
-        # Appendix A: Code References
-        if requirements_analysis and requirements_analysis.code_references:
-            code_refs = "| Category | Source Files |\n|----------|-------------|\n"
-            for category, files in requirements_analysis.code_references.items():
-                code_refs += f"| {category} | {', '.join(['`' + f + '`' for f in files[:5]])} |\n"
-
-            appendices.append({"title": "Appendix A: Source Code References", "content": code_refs})
-
-        # Appendix B: Glossary
+        # Appendix A: Glossary
         appendices.append(
             {
                 "title": "Appendix B: Glossary",
@@ -1503,13 +1781,12 @@ stateDiagram-v2
         return appendices
 
     def _generate_markdown(self, prd: PRDDocument) -> str:
-        """Generate the complete markdown document."""
+        """Generate the complete markdown document for migration."""
         md = f"""# {prd.title}
 
 **Version:** {prd.version}
 **Created:** {prd.created_date}
-**Author:** {prd.author}
-**PRD Type:** Migration Specification
+**Purpose:** Legacy System Migration Specification
 
 ---
 
@@ -1519,38 +1796,16 @@ stateDiagram-v2
 
 ---
 
-## Document Statistics
-
-| Metric | Count |
-|--------|-------|
 """
-        if "statistics" in prd.metadata:
-            stats = prd.metadata["statistics"]
-            for key, value in stats.items():
-                display_key = key.replace("_", " ").title()
-                md += f"| {display_key} | {value} |\n"
-
-        md += """
----
-
-## Table of Contents
-
-"""
-        # Generate TOC
+        # Add sections directly (no TOC or stats)
         for section in prd.sections:
-            anchor = section.title.lower().replace(" ", "-").replace(".", "")
-            md += f"- [{section.title}](#{anchor})\n"
+            md += f"# {section.title}\n\n{section.content}\n\n---\n\n"
 
-        md += f"{SECTION_SEPARATOR}\n"
-
-        # Add sections
-        for section in prd.sections:
-            md += f"# {section.title}\n\n{section.content}\n{SECTION_SEPARATOR}\n"
-
-        # Add appendices
-        md += "# Appendices\n\n"
-        for appendix in prd.appendices:
-            md += f"## {appendix['title']}\n\n{appendix['content']}\n\n"
+        # Add appendices if present
+        if prd.appendices:
+            md += "# Appendices\n\n"
+            for appendix in prd.appendices:
+                md += f"## {appendix['title']}\n\n{appendix['content']}\n\n"
 
         return md
 

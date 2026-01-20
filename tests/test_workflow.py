@@ -48,11 +48,11 @@ import java.util.List;
 import com.example.model.User;
 
 public class UserService {
-    
+
     public User findById(Long id) {
         return null;
     }
-    
+
     private void validate(User user) {
         // validation
     }

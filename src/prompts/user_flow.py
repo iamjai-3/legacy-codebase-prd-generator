@@ -16,8 +16,7 @@ When documenting user flows:
 3. Document step-by-step workflows
 4. Note decision points and alternative paths
 5. Identify error handling and edge cases
-6. Document cross-module interactions
-7. Create clear flow diagrams
+6. Create clear flow diagrams
 
 User flows should be:
 - Complete and accurate
@@ -97,19 +96,6 @@ For each major workflow, respond in JSON array format:
 ]
 
 Generate 3-5 key user flows."""
-
-    @staticmethod
-    def cross_module_flows(form_name: str, context_text: str) -> str:
-        """Prompt for identifying cross-module workflows."""
-        return f"""For "{form_name}", identify any cross-module workflows:
-
-Context:
-{context_text}
-
-List workflows that span multiple modules, formatted as:
-Source Module -> Action -> Target Module
-
-Focus on data flow and user navigation between modules."""
 
     @staticmethod
     def journey_map(form_name: str, flow_summaries: str) -> str:

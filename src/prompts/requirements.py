@@ -53,7 +53,6 @@ Generate requirements in JSON array format:
         "title": "Specific requirement title",
         "description": "Detailed technical description of EXACTLY what the code does",
         "business_logic": "Step-by-step business logic extracted from code",
-        "source_methods": ["ClassName.methodName(params) -> returnType"],
         "api_specification": {{
             "endpoint": "/api/path",
             "method": "POST",
@@ -70,12 +69,16 @@ Generate requirements in JSON array format:
         "category": "CRUD|validation|workflow|integration|reporting|calculation",
         "user_story": "As a [specific user role], I want [specific action] so that [business benefit]",
         "acceptance_criteria": ["Given specific condition, When specific action, Then exact expected result"],
-        "dependencies": ["FR-XXX"],
-        "source_files": ["path/to/SourceFile.java:lineNumber"]
+        "dependencies": ["FR-XXX"]
     }}
 ]
 
-CRITICAL: Extract at least 10-20 requirements covering ALL functionality. Include exact code references."""
+CRITICAL:
+- Extract at least 10-20 requirements covering ALL functionality
+- Include validation functions (doesChapterRecordExist, doesSubChapterRecordExist)
+- Include configuration checks (usingSubChapters, usingRepDefs)
+- Include fleet-specific operations
+- Include alert rate management operations"""
 
     @staticmethod
     def api_specification(form_name: str, service_code: str) -> str:
@@ -110,8 +113,7 @@ Extract EVERY API endpoint with complete specifications in JSON format:
         }},
         "business_logic": "Step-by-step logic executed",
         "database_calls": ["table.operation()"],
-        "external_calls": ["service.method()"],
-        "source_method": "ClassName.methodName:lineNumber"
+        "external_calls": ["service.method()"]
     }}
 ]
 
@@ -120,42 +122,50 @@ Document EVERY endpoint, even internal ones. Include ALL parameters and response
     @staticmethod
     def business_logic_extraction(form_name: str, code_content: str) -> str:
         """Prompt for extracting detailed business logic from code."""
-        return f"""Analyze the following code for "{form_name}" and extract ALL business logic in detail.
+        return f"""Analyze the following code for "{form_name}" and extract ALL business logic for migration.
 
 CODE TO ANALYZE:
 {code_content}
 
-Extract business logic in JSON format:
+EXTRACT EVERY:
+1. Validation rules (if conditions that show errors/warnings)
+2. Save/Update operations
+3. Field dependencies (when field A changes, update field B)
+4. Calculations and formulas
+5. State transitions (enabled/disabled, visible/invisible)
+6. Database operations (insert, update, delete)
+
+Return as JSON array:
 [
     {{
         "logic_id": "BL-001",
-        "name": "Descriptive name for this logic",
-        "type": "validation|calculation|workflow|transformation|decision",
-        "description": "What this logic accomplishes",
-        "trigger": "What triggers this logic (user action, event, API call)",
+        "name": "Alert Limit Validation",
+        "type": "validation",
+        "description": "Cannot have both alert limits as zero",
+        "trigger": "User changes alertLimitDays field",
         "inputs": [
-            {{"name": "inputName", "type": "dataType", "source": "where it comes from"}}
+            {{"name": "alertLimitDays", "type": "int", "source": "UI field"}},
+            {{"name": "alertLimitLandings", "type": "int", "source": "UI field"}}
         ],
         "steps": [
-            "1. First action taken",
-            "2. Conditional check: if (condition) then action",
-            "3. Database query: SELECT ... FROM ... WHERE ...",
-            "4. Calculation: result = formula",
-            "5. Return or store result"
+            "1. Check if alertLimitDays == 0",
+            "2. Check if alertLimitLandings == 0",
+            "3. If both zero, show error message",
+            "4. Set removalAlertLimit as mandatory"
         ],
         "outputs": [
-            {{"name": "outputName", "type": "dataType", "destination": "where it goes"}}
+            {{"name": "errorMessage", "type": "String", "destination": "csInfoPanel"}}
         ],
         "conditions": [
-            {{"condition": "if statement from code", "true_action": "what happens", "false_action": "alternative"}}
-        ],
-        "exceptions": ["Error conditions and how they're handled"],
-        "dependencies": ["Other services/classes this logic depends on"],
-        "source_location": "ClassName.methodName:startLine-endLine"
+            {{"condition": "alertLimitDays.equals(\\"0\\") && removalAlertLimit.equals(\\"0\\")", "true_action": "Show warning", "false_action": "Continue"}}
+        ]
     }}
 ]
 
-Extract EVERY piece of logic, including edge cases and error handling."""
+IMPORTANT:
+- Extract from ACTUAL code, not assumptions
+- Use EXACT method names and field names from the code
+- If no logic found, return empty array []"""
 
     @staticmethod
     def source_tables_extraction(form_name: str, kb_context: str) -> str:
@@ -302,6 +312,195 @@ Generate data requirements in JSON format (ONLY for entities found in the code):
 If no data entities are found in the code, return: []"""
 
     @staticmethod
+    def data_requirements_complete(
+        form_name: str, dto_code: str, normalized_schema: str, model_summary: str
+    ) -> str:
+        """Prompt that ensures ALL fields are extracted and mapped to normalized schema."""
+        return f"""Extract COMPLETE data model for "{form_name}" with ALL fields from DTO classes and map them to normalized schema.
+
+CRITICAL REQUIREMENTS:
+1. Extract ALL fields from every DTO class found in the code - do not skip any fields
+2. For each DTO field, create a mapping to the normalized schema column
+3. Document the transformation required (e.g., VARCHAR code → INTEGER ID)
+4. Include default values for new fields in normalized schema
+5. Verify completeness: if SubchaptersDTO has 9 fields, all 9 must be documented
+
+REQUIRED FIELDS FROM DTO CLASSES:
+{dto_code}
+
+NORMALIZED SCHEMA:
+{normalized_schema}
+
+MODEL/ENTITY CODE:
+{model_summary}
+
+For EACH entity, you MUST include:
+1. ALL fields from the DTO class (verify against class definition - count them!)
+2. Field mapping: DTO field → Normalized column → Data Type → Transformation Rule
+3. Primary key transformation (if applicable: VARCHAR composite → INTEGER ID)
+4. All relationships with cardinality
+5. All constraints and validations
+6. Default values for new fields not in legacy schema
+
+Generate data requirements in JSON format:
+[
+    {{
+        "entity_name": "Subchapters",
+        "description": "Subchapter entity with fleet-specific configuration",
+        "source_table": "SUBCHAPTERS",
+        "source_class": "SubchaptersDTO.java",
+        "fields": [
+            {{
+                "name": "fleet",
+                "java_type": "String",
+                "column": "fleet_code",
+                "type": "VARCHAR",
+                "normalized_column": "fleet_code",
+                "normalized_type": "VARCHAR",
+                "transformation": "Direct mapping, add FK constraint",
+                "constraints": ["FK to fleets"],
+                "validation": "Must exist in fleets table",
+                "default": "N/A",
+                "description": "Fleet code identifier"
+            }},
+            {{
+                "name": "chapter",
+                "java_type": "String",
+                "column": "CHAPTER",
+                "type": "VARCHAR2",
+                "normalized_column": "chapter_id",
+                "normalized_type": "INTEGER",
+                "transformation": "VARCHAR code → INTEGER ID via lookup",
+                "constraints": ["FK to chapters"],
+                "validation": "Must exist in chapters table",
+                "default": "N/A",
+                "description": "Chapter code (transformed to ID)"
+            }},
+            {{
+                "name": "subchapter",
+                "java_type": "String",
+                "column": "SUBCHAPTER",
+                "type": "VARCHAR2",
+                "normalized_column": "subchapter",
+                "normalized_type": "VARCHAR",
+                "transformation": "Direct mapping",
+                "constraints": [],
+                "validation": "1-2 characters",
+                "default": "N/A",
+                "description": "Subchapter identifier"
+            }},
+            {{
+                "name": "description",
+                "java_type": "String",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "description",
+                "normalized_type": "VARCHAR",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Subchapter description (new in normalized schema)"
+            }},
+            {{
+                "name": "alertLimitLandings",
+                "java_type": "BigInteger",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "alert_limit_landings",
+                "normalized_type": "INTEGER",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Alert limit in landings (new in normalized schema)"
+            }},
+            {{
+                "name": "alertLimitDays",
+                "java_type": "BigInteger",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "alert_limit_days",
+                "normalized_type": "INTEGER",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Alert limit in days (new in normalized schema)"
+            }},
+            {{
+                "name": "exclusionFlag",
+                "java_type": "String",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "exclusion_flag",
+                "normalized_type": "VARCHAR",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Fleet exclusion flag (new in normalized schema)"
+            }},
+            {{
+                "name": "etops",
+                "java_type": "String",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "etops",
+                "normalized_type": "VARCHAR",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "ETOPS indicator (new in normalized schema)"
+            }}
+        ],
+        "primary_key": ["subchapter_id"],
+        "primary_key_transformation": "Legacy: composite (FLEET, CHAPTER, SUBCHAPTER) → Normalized: INTEGER subchapter_id",
+        "foreign_keys": [
+            {{
+                "columns": ["fleet_code"],
+                "references_table": "fleets",
+                "references_columns": ["fleet_code"]
+            }},
+            {{
+                "columns": ["chapter_id"],
+                "references_table": "chapters",
+                "references_columns": ["chapter_id"]
+            }}
+        ],
+        "indexes": [],
+        "relationships": [
+            {{
+                "type": "MANY_TO_ONE",
+                "target_entity": "Fleets",
+                "target_table": "fleets",
+                "join_column": "fleet_code"
+            }},
+            {{
+                "type": "MANY_TO_ONE",
+                "target_entity": "Chapters",
+                "target_table": "chapters",
+                "join_column": "chapter_id"
+            }}
+        ],
+        "business_rules": ["Subchapters are fleet-specific", "Subchapter codes are 1-2 characters"],
+        "sample_queries": [
+            {{
+                "purpose": "Get subchapters for a fleet and chapter",
+                "sql": "SELECT * FROM subchapters WHERE fleet_code = ? AND chapter_id = ?"
+            }}
+        ]
+    }}
+]
+
+CRITICAL:
+- If a field exists in the DTO but is missing from your response, the PRD is incomplete
+- Count the fields in the DTO class and ensure ALL are included
+- For SubchaptersDTO, you MUST include all 9 fields: fleet, chapter, subchapter, description, alertLimitLandings, alertLimitDays, exclusionFlag, etops
+- Document the transformation for each field (direct mapping, lookup, new field, etc.)"""
+
+    @staticmethod
     def validation_rules(form_name: str, validation_code: str, context_text: str) -> str:
         """Prompt for extracting precise validation rules."""
         return f"""Extract ONLY validation rules that are EXPLICITLY present in the "{form_name}" source code.
@@ -331,8 +530,7 @@ Generate validation rules in JSON format (ONLY for validations found in the code
         "error_code": "CODE_FROM_SOURCE_OR_EMPTY",
         "description": "What this validation checks based on code logic",
         "when_applied": "Inferred from code context",
-        "dependencies": ["ACTUAL_DEPENDENCIES_FROM_CODE"],
-        "source_location": "ACTUAL_FILE.java:ACTUAL_LINE"
+        "dependencies": ["ACTUAL_DEPENDENCIES_FROM_CODE"]
     }}
 ]
 
@@ -384,8 +582,7 @@ Generate integration specifications in JSON format (ONLY for integrations found 
             "fallback": "AS_IN_CODE_OR_N/A",
             "alerts": "AS_IN_CODE_OR_N/A"
         }},
-        "frequency": "INFERRED_FROM_CODE",
-        "source_files": ["ACTUAL_FILE.java"]
+        "frequency": "INFERRED_FROM_CODE"
     }}
 ]
 
@@ -421,8 +618,7 @@ Generate workflow specifications in JSON format:
         ],
         "initial_state": "STATE_1",
         "terminal_states": ["STATE_N"],
-        "business_rules": ["Rules governing this workflow"],
-        "source_location": "ClassName.methodName"
+        "business_rules": ["Rules governing this workflow"]
     }}
 ]
 
