@@ -306,6 +306,7 @@ Code metrics:
             return "high"
         elif high_count >= 1:
             return "medium"
+        else:
             return "low"
 
     async def _recommend_approach(

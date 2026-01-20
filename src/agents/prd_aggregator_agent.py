@@ -22,6 +22,9 @@ from src.agents.user_flow_agent import UserFlowResult
 from src.prompts.prd_aggregator import PRDAggregatorPrompts
 from src.utils.logging_config import ExecutionTimer
 
+# Constants
+SECTION_SEPARATOR = "\n---\n"
+
 
 @dataclass
 class PRDSection:
@@ -231,39 +234,9 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
 
         # 3-8. Requirements-based sections
         if requirements_analysis:
-            # 3. Business Logic section (NEW)
-            if requirements_analysis.business_logic:
-                sections.append(
-                    await self._generate_business_logic_section(
-                        context, requirements_analysis, kb_contexts, section_order
-                    )
-                )
-                section_order += 1
-
-            # 4. API Specification section (NEW)
-            if requirements_analysis.api_specifications:
-                sections.append(
-                    await self._generate_api_section(
-                        context, requirements_analysis, kb_contexts, section_order
-                    )
-                )
-                section_order += 1
-
-            # 5. Functional Requirements section
-            sections.append(
-                await self._generate_functional_requirements_section(
-                    context, requirements_analysis, kb_contexts, section_order
-                )
+            section_order = await self._add_requirements_sections(
+                context, requirements_analysis, kb_contexts, sections, section_order
             )
-            section_order += 1
-
-            # 6. Data Model section
-            sections.append(
-                await self._generate_data_model_section(
-                    context, requirements_analysis, kb_contexts, section_order
-                )
-            )
-            section_order += 1
 
             # 7. Source Tables & Database Mappings section (from existing PRD docs)
             if requirements_analysis.source_tables or requirements_analysis.database_mappings:
@@ -330,6 +303,75 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         )
 
         return sections
+
+    async def _add_requirements_sections(
+        self,
+        context: AgentContext,
+        requirements_analysis: RequirementsGeneratorResult,
+        kb_contexts: dict[str, list[str]],
+        sections: list[PRDSection],
+        section_order: int,
+    ) -> int:
+        """Add all requirements-based sections. Returns updated section_order."""
+        if requirements_analysis.business_logic:
+            sections.append(
+                await self._generate_business_logic_section(
+                    context, requirements_analysis, kb_contexts, section_order
+                )
+            )
+            section_order += 1
+
+        if requirements_analysis.api_specifications:
+            sections.append(
+                await self._generate_api_section(
+                    context, requirements_analysis, kb_contexts, section_order
+                )
+            )
+            section_order += 1
+
+        sections.append(
+            await self._generate_functional_requirements_section(
+                context, requirements_analysis, kb_contexts, section_order
+            )
+        )
+        section_order += 1
+
+        sections.append(
+            await self._generate_data_model_section(
+                context, requirements_analysis, kb_contexts, section_order
+            )
+        )
+        section_order += 1
+
+        if requirements_analysis.source_tables:
+            sections.append(
+                await self._generate_source_tables_section(
+                    context, requirements_analysis, section_order
+                )
+            )
+            section_order += 1
+
+        if requirements_analysis.integration_requirements:
+            sections.append(
+                await self._generate_integration_section(
+                    context, requirements_analysis, section_order
+                )
+            )
+            section_order += 1
+
+        sections.append(
+            await self._generate_nfr_section(context, requirements_analysis, section_order)
+        )
+        section_order += 1
+
+        sections.append(
+            await self._generate_business_rules_section(
+                context, requirements_analysis, section_order
+            )
+        )
+        section_order += 1
+
+        return section_order
 
     def _create_prd_document(
         self,
@@ -489,7 +531,14 @@ Each item includes trigger conditions, processing steps, and expected outputs.
 **Inputs:**
 """
             for inp in bl.inputs:
-                content += f"- `{inp.get('name', 'N/A')}` ({inp.get('type', 'unknown')}): {inp.get('source', 'N/A')}\n"
+                if isinstance(inp, dict):
+                    content += f"- `{inp.get('name', 'N/A')}` ({inp.get('type', 'unknown')}): {inp.get('source', 'N/A')}\n"
+                elif isinstance(inp, str):
+                    # Handle case where input is a string instead of a dict
+                    content += f"- {inp}\n"
+                else:
+                    # Handle other types
+                    content += f"- {str(inp)}\n"
 
             content += "\n**Processing Steps:**\n"
             for i, step in enumerate(bl.steps, 1):
@@ -498,16 +547,30 @@ Each item includes trigger conditions, processing steps, and expected outputs.
             if bl.conditions:
                 content += "\n**Conditional Logic:**\n"
                 for cond in bl.conditions:
-                    content += f"- IF `{cond.get('condition', '')}` THEN {cond.get('true_action', '')} ELSE {cond.get('false_action', '')}\n"
+                    if isinstance(cond, dict):
+                        content += f"- IF `{cond.get('condition', '')}` THEN {cond.get('true_action', '')} ELSE {cond.get('false_action', '')}\n"
+                    elif isinstance(cond, str):
+                        # Handle case where condition is a string instead of a dict
+                        content += f"- {cond}\n"
+                    else:
+                        # Handle other types
+                        content += f"- {str(cond)}\n"
 
             content += "\n**Outputs:**\n"
             for out in bl.outputs:
-                content += f"- `{out.get('name', 'N/A')}` ({out.get('type', 'unknown')}): {out.get('destination', 'N/A')}\n"
+                if isinstance(out, dict):
+                    content += f"- `{out.get('name', 'N/A')}` ({out.get('type', 'unknown')}): {out.get('destination', 'N/A')}\n"
+                elif isinstance(out, str):
+                    # Handle case where output is a string instead of a dict
+                    content += f"- {out}\n"
+                else:
+                    # Handle other types
+                    content += f"- {str(out)}\n"
 
             if bl.source_location:
                 content += f"\n**Source Reference:** `{bl.source_location}`\n"
 
-            content += "\n---\n"
+            content += SECTION_SEPARATOR
 
         return PRDSection(title=f"{order}. Business Logic", content=content, order=order)
 
@@ -586,7 +649,13 @@ request/response schemas suitable for implementation in any framework.
         content += "\n### Detailed Requirements\n"
 
         for req in requirements_analysis.functional_requirements:
-            content += f"""
+            content += self._format_functional_requirement(req)
+
+        return PRDSection(title=f"{order}. Functional Requirements", content=content, order=order)
+
+    def _format_functional_requirement(self, req) -> str:
+        """Format a single functional requirement."""
+        content = f"""
 #### {req.req_id}: {req.title}
 **Priority:** {req.priority} | **Category:** {req.category}
 
@@ -600,33 +669,41 @@ request/response schemas suitable for implementation in any framework.
 **Acceptance Criteria:**
 {chr(10).join(["- " + ac for ac in req.acceptance_criteria])}
 """
-            if req.api_specification:
-                content += f"""
+        if req.api_specification:
+            content += self._format_api_spec_for_req(req.api_specification)
+        if req.database_operations:
+            content += self._format_database_operations(req.database_operations)
+        if req.validation_rules:
+            content += f"\n**Validation Rules:**\n{chr(10).join(['- ' + v for v in req.validation_rules])}\n"
+        if req.calculations:
+            content += (
+                f"\n**Calculations:**\n{chr(10).join(['- ' + c for c in req.calculations])}\n"
+            )
+        if req.source_files:
+            content += (
+                f"\n**Source References:** {', '.join(['`' + f + '`' for f in req.source_files])}\n"
+            )
+        content += (
+            f"\n**Dependencies:** {', '.join(req.dependencies) if req.dependencies else 'None'}\n"
+        )
+        content += SECTION_SEPARATOR
+        return content
+
+    def _format_api_spec_for_req(self, api_spec: dict) -> str:
+        """Format API specification for a requirement."""
+        return f"""
 **API Contract:**
-- Endpoint: `{req.api_specification.get('method', 'GET')} {req.api_specification.get('endpoint', 'N/A')}`
-- Request: `{req.api_specification.get('request_body', {})}`
-- Response: `{req.api_specification.get('response', {})}`
+- Endpoint: `{api_spec.get('method', 'GET')} {api_spec.get('endpoint', 'N/A')}`
+- Request: `{api_spec.get('request_body', {})}`
+- Response: `{api_spec.get('response', {})}`
 """
-            if req.database_operations:
-                content += "\n**Database Operations:**\n"
-                for op in req.database_operations:
-                    content += f"- {op.get('operation', 'QUERY')}: `{op.get('table', 'N/A')}` ({', '.join(op.get('columns', []))})\n"
 
-            if req.validation_rules:
-                content += f"\n**Validation Rules:**\n{chr(10).join(['- ' + v for v in req.validation_rules])}\n"
-
-            if req.calculations:
-                content += (
-                    f"\n**Calculations:**\n{chr(10).join(['- ' + c for c in req.calculations])}\n"
-                )
-
-            if req.source_files:
-                content += f"\n**Source References:** {', '.join(['`' + f + '`' for f in req.source_files])}\n"
-
-            content += f"\n**Dependencies:** {', '.join(req.dependencies) if req.dependencies else 'None'}\n"
-            content += "\n---\n"
-
-        return PRDSection(title=f"{order}. Functional Requirements", content=content, order=order)
+    def _format_database_operations(self, operations: list[dict]) -> str:
+        """Format database operations."""
+        content = "\n**Database Operations:**\n"
+        for op in operations:
+            content += f"- {op.get('operation', 'QUERY')}: `{op.get('table', 'N/A')}` ({', '.join(op.get('columns', []))})\n"
+        return content
 
     async def _generate_data_model_section(
         self,
@@ -643,36 +720,56 @@ request/response schemas suitable for implementation in any framework.
 """
         # Generate Mermaid ER diagram
         if requirements_analysis.data_requirements:
-            content += "```mermaid\nerDiagram\n"
-            for entity in requirements_analysis.data_requirements[:10]:
-                entity_name = entity.entity_name.replace(" ", "_")
-                content += f"    {entity_name} {{\n"
-                for field in entity.fields[:10]:
-                    field_type = str(field.get("type", "string")).replace(" ", "_")
-                    field_name = str(field.get("name", "field")).replace(" ", "_")
-                    content += f"        {field_type} {field_name}\n"
-                content += "    }\n"
-
-            # Add relationships
-            for entity in requirements_analysis.data_requirements:
-                entity_name = entity.entity_name.replace(" ", "_")
-                for rel in entity.relationships:
-                    rel_type = rel.get("type", "ONE_TO_MANY")
-                    target = str(rel.get("target", "")).replace(" ", "_")
-                    if target:
-                        if "MANY_TO_MANY" in rel_type:
-                            content += f'    {entity_name} }}o--o{{ {target} : ""\n'
-                        elif "ONE_TO_MANY" in rel_type:
-                            content += f'    {entity_name} ||--o{{ {target} : ""\n'
-                        else:
-                            content += f'    {entity_name} }}o--|| {target} : ""\n'
-
-            content += "```\n\n"
+            content += self._generate_mermaid_diagram(requirements_analysis.data_requirements)
 
         content += "### Entity Specifications\n"
 
         for entity in requirements_analysis.data_requirements:
-            content += f"""
+            content += self._format_entity_specification(entity)
+
+        return PRDSection(title=f"{order}. Data Model", content=content, order=order)
+
+    def _generate_mermaid_diagram(self, data_requirements: list) -> str:
+        """Generate Mermaid ER diagram from data requirements."""
+        content = "```mermaid\nerDiagram\n"
+        for entity in data_requirements[:10]:
+            entity_name = entity.entity_name.replace(" ", "_")
+            content += f"    {entity_name} {{\n"
+            for field in entity.fields[:10]:
+                # Handle both dict and string cases
+                if isinstance(field, dict):
+                    field_type = str(field.get("type", "string")).replace(" ", "_")
+                    field_name = str(field.get("name", "field")).replace(" ", "_")
+                else:
+                    field_type = "string"
+                    field_name = str(field).replace(" ", "_")
+                content += f"        {field_type} {field_name}\n"
+            content += "    }\n"
+
+        # Add relationships
+        for entity in data_requirements:
+            entity_name = entity.entity_name.replace(" ", "_")
+            for rel in entity.relationships:
+                content += self._format_relationship(entity_name, rel)
+
+        content += "```\n\n"
+        return content
+
+    def _format_relationship(self, entity_name: str, rel: dict) -> str:
+        """Format a single relationship for Mermaid diagram."""
+        rel_type = rel.get("type", "ONE_TO_MANY")
+        target = str(rel.get("target", "")).replace(" ", "_")
+        if not target:
+            return ""
+        if "MANY_TO_MANY" in rel_type:
+            return f'    {entity_name} }}o--o{{ {target} : ""\n'
+        if "ONE_TO_MANY" in rel_type:
+            return f'    {entity_name} ||--o{{ {target} : ""\n'
+        return f'    {entity_name} }}o--|| {target} : ""\n'
+
+    def _format_entity_specification(self, entity) -> str:
+        """Format entity specification."""
+        content = f"""
 #### {entity.entity_name}
 
 **Description:** {entity.description}
@@ -684,48 +781,78 @@ request/response schemas suitable for implementation in any framework.
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 """
-            for field in entity.fields:
+        for field in entity.fields:
+            # Handle both dict and string cases
+            if isinstance(field, dict):
                 constraints = (
                     ", ".join(field.get("constraints", [])) if field.get("constraints") else "—"
                 )
                 content += f"| `{field.get('name', '')}` | {field.get('type', '')} | {constraints} | {field.get('description', '')} |\n"
+            else:
+                # Handle case where field is a string or other type
+                content += f"| `{str(field)}` | — | — | — |\n"
 
-            if entity.primary_key:
+        if entity.primary_key:
+            content += (
+                f"\n**Primary Key:** {', '.join(['`' + k + '`' for k in entity.primary_key])}\n"
+            )
+        if entity.foreign_keys:
+            content += self._format_entity_foreign_keys(entity.foreign_keys)
+        if entity.indexes:
+            content += self._format_entity_indexes(entity.indexes)
+        if entity.relationships:
+            content += self._format_entity_relationships(entity.relationships)
+        if entity.business_rules:
+            content += f"\n**Business Rules:**\n{chr(10).join(['- ' + r for r in entity.business_rules])}\n"
+        if entity.sample_queries:
+            content += self._format_entity_sample_queries(entity.sample_queries)
+        content += SECTION_SEPARATOR
+        return content
+
+    def _format_entity_foreign_keys(self, foreign_keys: list) -> str:
+        """Format foreign keys for entity."""
+        content = "\n**Foreign Keys:**\n"
+        for fk in foreign_keys:
+            if isinstance(fk, dict):
                 content += (
-                    f"\n**Primary Key:** {', '.join(['`' + k + '`' for k in entity.primary_key])}\n"
+                    f"- `{', '.join(fk.get('columns', []))}` → {fk.get('references', 'N/A')}\n"
                 )
+            else:
+                content += f"- {str(fk)}\n"
+        return content
 
-            if entity.foreign_keys:
-                content += "\n**Foreign Keys:**\n"
-                for fk in entity.foreign_keys:
-                    content += (
-                        f"- `{', '.join(fk.get('columns', []))}` → {fk.get('references', 'N/A')}\n"
-                    )
+    def _format_entity_indexes(self, indexes: list) -> str:
+        """Format indexes for entity."""
+        content = "\n**Indexes:**\n"
+        for idx in indexes:
+            if isinstance(idx, dict):
+                unique = "UNIQUE " if idx.get("unique") else ""
+                content += (
+                    f"- `{idx.get('name', 'idx')}`: {unique}({', '.join(idx.get('columns', []))})\n"
+                )
+            else:
+                content += f"- {str(idx)}\n"
+        return content
 
-            if entity.indexes:
-                content += "\n**Indexes:**\n"
-                for idx in entity.indexes:
-                    unique = "UNIQUE " if idx.get("unique") else ""
-                    content += f"- `{idx.get('name', 'idx')}`: {unique}({', '.join(idx.get('columns', []))})\n"
+    def _format_entity_relationships(self, relationships: list) -> str:
+        """Format relationships for entity."""
+        content = "\n**Relationships:**\n"
+        for rel in relationships:
+            if isinstance(rel, dict):
+                content += f"- {rel.get('type', 'RELATED_TO')} `{rel.get('target', 'N/A')}` via `{rel.get('join_column', 'N/A')}`\n"
+            else:
+                content += f"- {str(rel)}\n"
+        return content
 
-            if entity.relationships:
-                content += "\n**Relationships:**\n"
-                for rel in entity.relationships:
-                    content += f"- {rel.get('type', 'RELATED_TO')} `{rel.get('target', 'N/A')}` via `{rel.get('join_column', 'N/A')}`\n"
-
-            if entity.business_rules:
-                content += f"\n**Business Rules:**\n{chr(10).join(['- ' + r for r in entity.business_rules])}\n"
-
-            if entity.sample_queries:
-                content += "\n**Sample Queries:**\n"
-                for q in entity.sample_queries[:3]:
-                    content += (
-                        f"\n*{q.get('purpose', 'Query')}:*\n```sql\n{q.get('sql', '')}\n```\n"
-                    )
-
-            content += "\n---\n"
-
-        return PRDSection(title=f"{order}. Data Model", content=content, order=order)
+    def _format_entity_sample_queries(self, sample_queries: list) -> str:
+        """Format sample queries for entity."""
+        content = "\n**Sample Queries:**\n"
+        for q in sample_queries[:3]:
+            if isinstance(q, dict):
+                content += f"\n*{q.get('purpose', 'Query')}:*\n```sql\n{q.get('sql', '')}\n```\n"
+            else:
+                content += f"\n*Query:*\n```sql\n{str(q)}\n```\n"
+        return content
 
     async def _generate_source_tables_section(
         self,
@@ -745,7 +872,19 @@ This section provides the exact table structures needed for migration.
             content += "### Database Source Tables\n\n"
 
             for table in requirements_analysis.source_tables:
-                content += f"""#### {table.table_name}
+                content += self._format_source_table(table)
+
+        # Database Mappings
+        if requirements_analysis.database_mappings:
+            content += self._format_database_mappings(requirements_analysis.database_mappings)
+
+        return PRDSection(
+            title=f"{order}. Source Tables & Database Mappings", content=content, order=order
+        )
+
+    def _format_source_table(self, table) -> str:
+        """Format source table specification."""
+        content = f"""#### {table.table_name}
 
 **Type:** {table.table_type.upper()}
 
@@ -755,85 +894,141 @@ This section provides the exact table structures needed for migration.
 | Column Name | Data Type | Constraints | Description |
 |-------------|-----------|-------------|-------------|
 """
-                for col in table.columns:
-                    constraints = (
-                        ", ".join(col.get("constraints", [])) if col.get("constraints") else "—"
-                    )
-                    content += f"| `{col.get('column_name', '')}` | {col.get('data_type', '')} | {constraints} | {col.get('description', '')} |\n"
+        for col in table.columns:
+            # Handle both dict and string cases
+            if isinstance(col, dict):
+                constraints = (
+                    ", ".join(col.get("constraints", [])) if col.get("constraints") else "—"
+                )
+                content += f"| `{col.get('column_name', '')}` | {col.get('data_type', '')} | {constraints} | {col.get('description', '')} |\n"
+            else:
+                # Handle case where col is a string or other type
+                content += f"| `{str(col)}` | — | — | — |\n"
 
-                if table.primary_key:
-                    content += f"\n**Primary Key:** {', '.join(['`' + pk + '`' for pk in table.primary_key])}\n"
+        if table.primary_key:
+            content += (
+                f"\n**Primary Key:** {', '.join(['`' + pk + '`' for pk in table.primary_key])}\n"
+            )
+        if table.foreign_keys:
+            content += self._format_table_foreign_keys(table.foreign_keys)
+        if table.indexes:
+            content += self._format_table_indexes(table.indexes)
+        if table.stored_procedures:
+            content += self._format_table_stored_procedures(table.stored_procedures)
+        content += SECTION_SEPARATOR
+        return content
 
-                if table.foreign_keys:
-                    content += "\n**Foreign Keys:**\n"
-                    for fk in table.foreign_keys:
-                        cols = ", ".join(fk.get("columns", []))
-                        refs_table = fk.get("references_table", "N/A")
-                        refs_cols = ", ".join(fk.get("references_columns", []))
-                        on_delete = fk.get("on_delete", "")
-                        content += f"- `{cols}` → `{refs_table}({refs_cols})`"
-                        if on_delete:
-                            content += f" ON DELETE {on_delete}"
-                        content += "\n"
+    def _format_table_foreign_keys(self, foreign_keys: list) -> str:
+        """Format foreign keys for table."""
+        content = "\n**Foreign Keys:**\n"
+        for fk in foreign_keys:
+            content += self._format_foreign_key(fk)
+        return content
 
-                if table.indexes:
-                    content += "\n**Indexes:**\n"
-                    for idx in table.indexes:
-                        unique = "UNIQUE " if idx.get("unique") else ""
-                        content += f"- `{idx.get('name', 'idx')}`: {unique}({', '.join(idx.get('columns', []))})\n"
+    def _format_table_indexes(self, indexes: list) -> str:
+        """Format indexes for table."""
+        content = "\n**Indexes:**\n"
+        for idx in indexes:
+            if isinstance(idx, dict):
+                unique = "UNIQUE " if idx.get("unique") else ""
+                content += (
+                    f"- `{idx.get('name', 'idx')}`: {unique}({', '.join(idx.get('columns', []))})\n"
+                )
+            else:
+                content += f"- {str(idx)}\n"
+        return content
 
-                if table.stored_procedures:
-                    content += "\n**Stored Procedures:**\n"
-                    for proc in table.stored_procedures:
-                        content += f"\n##### `{proc.get('name', 'procedure')}`\n"
-                        content += f"**Description:** {proc.get('description', '')}\n"
-                        if proc.get("parameters"):
-                            content += "\n**Parameters:**\n"
-                            for param in proc.get("parameters", []):
-                                content += f"- `{param.get('name', '')}` ({param.get('type', '')}) - {param.get('direction', 'IN')}\n"
-                        if proc.get("returns"):
-                            content += f"\n**Returns:** {proc.get('returns', '')}\n"
+    def _format_table_stored_procedures(self, stored_procedures: list) -> str:
+        """Format stored procedures for table."""
+        content = "\n**Stored Procedures:**\n"
+        for proc in stored_procedures:
+            content += self._format_stored_procedure(proc)
+        return content
 
-                content += "\n---\n"
+    def _format_foreign_key(self, fk: dict) -> str:
+        """Format foreign key specification."""
+        if not isinstance(fk, dict):
+            return f"- {str(fk)}\n"
+        cols = ", ".join(fk.get("columns", []))
+        refs_table = fk.get("references_table", "N/A")
+        refs_cols = ", ".join(fk.get("references_columns", []))
+        on_delete = fk.get("on_delete", "")
+        content = f"- `{cols}` → `{refs_table}({refs_cols})`"
+        if on_delete:
+            content += f" ON DELETE {on_delete}"
+        content += "\n"
+        return content
 
-        # Database Mappings
-        if requirements_analysis.database_mappings:
-            content += "\n### Entity-to-Table Mappings\n\n"
-            content += "Mappings between Java entity classes and database tables.\n\n"
+    def _format_stored_procedure(self, proc: dict) -> str:
+        """Format stored procedure specification."""
+        if not isinstance(proc, dict):
+            return f"\n##### Procedure\n{str(proc)}\n"
+        content = f"\n##### `{proc.get('name', 'procedure')}`\n"
+        content += f"**Description:** {proc.get('description', '')}\n"
+        if proc.get("parameters"):
+            content += "\n**Parameters:**\n"
+            for param in proc.get("parameters", []):
+                # Handle both dict and string cases
+                if isinstance(param, dict):
+                    content += f"- `{param.get('name', '')}` ({param.get('type', '')}) - {param.get('direction', 'IN')}\n"
+                else:
+                    content += f"- {str(param)}\n"
+        if proc.get("returns"):
+            content += f"\n**Returns:** {proc.get('returns', '')}\n"
+        return content
 
-            for mapping in requirements_analysis.database_mappings:
-                content += f"""#### {mapping.entity_class} → {mapping.table_name}
+    def _format_database_mappings(self, mappings: list) -> str:
+        """Format database mappings."""
+        content = "\n### Entity-to-Table Mappings\n\n"
+        content += "Mappings between Java entity classes and database tables.\n\n"
+
+        for mapping in mappings:
+            content += f"""#### {mapping.entity_class} → {mapping.table_name}
 
 **Field Mappings:**
 | Java Field | Java Type | Column Name | Column Type | Annotations |
 |------------|-----------|-------------|-------------|-------------|
 """
-                for fm in mapping.field_mappings:
+            for fm in mapping.field_mappings:
+                # Handle both dict and string cases
+                if isinstance(fm, dict):
                     annotations = (
                         ", ".join(fm.get("annotations", [])) if fm.get("annotations") else "—"
                     )
                     content += f"| `{fm.get('java_field', '')}` | {fm.get('java_type', '')} | `{fm.get('column_name', '')}` | {fm.get('column_type', '')} | {annotations} |\n"
+                else:
+                    # Handle case where fm is a string or other type
+                    content += f"| `{str(fm)}` | — | — | — | — |\n"
 
-                if mapping.relationships:
-                    content += "\n**Relationships:**\n"
-                    for rel in mapping.relationships:
-                        content += f"- {rel.get('type', 'RELATED_TO')} `{rel.get('target_entity', '')}` (Table: `{rel.get('target_table', '')}`) via `{rel.get('join_column', '')}`\n"
+            if mapping.relationships:
+                content += self._format_mapping_relationships(mapping.relationships)
+            if mapping.queries:
+                content += self._format_mapping_queries(mapping.queries)
+            content += SECTION_SEPARATOR
+        return content
 
-                if mapping.queries:
-                    content += "\n**Common Queries:**\n"
-                    for query in mapping.queries[:5]:
-                        content += (
-                            f"\n*{query.get('name', 'query')}* ({query.get('type', 'SELECT')}):\n"
-                        )
-                        content += f"```sql\n{query.get('sql_or_jpql', '')}\n```\n"
-                        if query.get("purpose"):
-                            content += f"Purpose: {query.get('purpose', '')}\n"
+    def _format_mapping_relationships(self, relationships: list) -> str:
+        """Format relationships for mapping."""
+        content = "\n**Relationships:**\n"
+        for rel in relationships:
+            if isinstance(rel, dict):
+                content += f"- {rel.get('type', 'RELATED_TO')} `{rel.get('target_entity', '')}` (Table: `{rel.get('target_table', '')}`) via `{rel.get('join_column', '')}`\n"
+            else:
+                content += f"- {str(rel)}\n"
+        return content
 
-                content += "\n---\n"
-
-        return PRDSection(
-            title=f"{order}. Source Tables & Database Mappings", content=content, order=order
-        )
+    def _format_mapping_queries(self, queries: list) -> str:
+        """Format queries for mapping."""
+        content = "\n**Common Queries:**\n"
+        for query in queries[:5]:
+            if isinstance(query, dict):
+                content += f"\n*{query.get('name', 'query')}* ({query.get('type', 'SELECT')}):\n"
+                content += f"```sql\n{query.get('sql_or_jpql', '')}\n```\n"
+                if query.get("purpose"):
+                    content += f"*Purpose: {query.get('purpose')}*\n"
+            else:
+                content += f"\n*Query:*\n```sql\n{str(query)}\n```\n"
+        return content
 
     async def _generate_validation_section(
         self,
@@ -939,23 +1134,34 @@ All external system integrations required for this module.
 **Data Mapping:**
 """
             for mapping in integ.data_mapping:
-                content += f"- `{mapping.get('source_field', 'N/A')}` → `{mapping.get('target_field', 'N/A')}`"
-                if mapping.get("transformation"):
-                    content += f" (transform: {mapping.get('transformation')})"
+                # Handle both dict and string cases
+                if isinstance(mapping, dict):
+                    content += f"- `{mapping.get('source_field', 'N/A')}` → `{mapping.get('target_field', 'N/A')}`"
+                    if mapping.get("transformation"):
+                        content += f" (transform: {mapping.get('transformation')})"
+                else:
+                    content += f"- {mapping}"
                 content += "\n"
 
             if integ.error_handling:
-                content += f"""
+                # Handle both dict and string cases
+                if isinstance(integ.error_handling, dict):
+                    content += f"""
 **Error Handling:**
 - Retry Policy: {integ.error_handling.get('retry_policy', 'N/A')}
 - Fallback: {integ.error_handling.get('fallback', 'N/A')}
 - Alerts: {integ.error_handling.get('alerts', 'N/A')}
 """
+                else:
+                    content += f"""
+**Error Handling:**
+{integ.error_handling}
+"""
 
             if integ.source_files:
                 content += f"\n**Source References:** {', '.join(['`' + f + '`' for f in integ.source_files])}\n"
 
-            content += "\n---\n"
+            content += SECTION_SEPARATOR
 
         return PRDSection(title=f"{order}. External Integrations", content=content, order=order)
 
@@ -1107,45 +1313,64 @@ State machines and approval workflows in the module.
 ```mermaid
 stateDiagram-v2
 """
-            # Add states
-            for state in wf.states:
-                content += f"    {state.get('id', 'state')}: {state.get('name', 'State')}\n"
-
-            # Add initial state
-            if wf.initial_state:
-                content += f"    [*] --> {wf.initial_state}\n"
-
-            # Add transitions
-            for trans in wf.transitions:
-                from_state = trans.get("from", "start")
-                to_state = trans.get("to", "end")
-                trigger = trans.get("trigger", "action")
-                content += f"    {from_state} --> {to_state}: {trigger}\n"
-
-            # Add terminal states
-            for term in wf.terminal_states:
-                content += f"    {term} --> [*]\n"
-
+            content += self._format_workflow_diagram(wf)
             content += "```\n\n"
-
-            content += "**States:**\n"
-            for state in wf.states:
-                content += f"- **{state.get('id', 'state')}** ({state.get('name', '')}): {state.get('description', '')}\n"
-
-            content += "\n**Transitions:**\n"
-            content += "| From | To | Trigger | Conditions | Actions |\n"
-            content += "|------|-----|---------|------------|--------|\n"
-            for trans in wf.transitions:
-                conditions = ", ".join(trans.get("guard_conditions", []))[:30] or "—"
-                actions = ", ".join(trans.get("actions", []))[:30] or "—"
-                content += f"| {trans.get('from', '')} | {trans.get('to', '')} | {trans.get('trigger', '')} | {conditions} | {actions} |\n"
-
+            content += self._format_workflow_states(wf.states)
+            content += self._format_workflow_transitions(wf.transitions)
             if wf.source_location:
                 content += f"\n**Source Reference:** `{wf.source_location}`\n"
 
-            content += "\n---\n"
+            content += SECTION_SEPARATOR
 
         return PRDSection(title=f"{order}. Workflow Specifications", content=content, order=order)
+
+    def _format_workflow_diagram(self, wf) -> str:
+        """Format workflow state diagram."""
+        content = ""
+        for state in wf.states:
+            if isinstance(state, dict):
+                content += f"    {state.get('id', 'state')}: {state.get('name', 'State')}\n"
+            else:
+                content += f"    {str(state)}: State\n"
+        if wf.initial_state:
+            content += f"    [*] --> {wf.initial_state}\n"
+        for trans in wf.transitions:
+            if isinstance(trans, dict):
+                from_state = trans.get("from", "start")
+                to_state = trans.get("to", "end")
+                trigger = trans.get("trigger", "action")
+            else:
+                from_state = "start"
+                to_state = "end"
+                trigger = str(trans)
+            content += f"    {from_state} --> {to_state}: {trigger}\n"
+        for term in wf.terminal_states:
+            content += f"    {term} --> [*]\n"
+        return content
+
+    def _format_workflow_states(self, states: list) -> str:
+        """Format workflow states."""
+        content = "**States:**\n"
+        for state in states:
+            if isinstance(state, dict):
+                content += f"- **{state.get('id', 'state')}** ({state.get('name', '')}): {state.get('description', '')}\n"
+            else:
+                content += f"- **{str(state)}**\n"
+        return content
+
+    def _format_workflow_transitions(self, transitions: list) -> str:
+        """Format workflow transitions."""
+        content = "\n**Transitions:**\n"
+        content += "| From | To | Trigger | Conditions | Actions |\n"
+        content += "|------|-----|---------|------------|--------|\n"
+        for trans in transitions:
+            if isinstance(trans, dict):
+                conditions = ", ".join(trans.get("guard_conditions", []))[:30] or "—"
+                actions = ", ".join(trans.get("actions", []))[:30] or "—"
+                content += f"| {trans.get('from', '')} | {trans.get('to', '')} | {trans.get('trigger', '')} | {conditions} | {actions} |\n"
+            else:
+                content += f"| — | — | {str(trans)} | — | — |\n"
+        return content
 
     async def _generate_migration_section(
         self,
@@ -1316,11 +1541,11 @@ stateDiagram-v2
             anchor = section.title.lower().replace(" ", "-").replace(".", "")
             md += f"- [{section.title}](#{anchor})\n"
 
-        md += "\n---\n\n"
+        md += f"{SECTION_SEPARATOR}\n"
 
         # Add sections
         for section in prd.sections:
-            md += f"# {section.title}\n\n{section.content}\n\n---\n\n"
+            md += f"# {section.title}\n\n{section.content}\n{SECTION_SEPARATOR}\n"
 
         # Add appendices
         md += "# Appendices\n\n"

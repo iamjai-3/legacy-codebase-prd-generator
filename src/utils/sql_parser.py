@@ -7,6 +7,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+# Constants
+PRIMARY_KEY_CONSTRAINT = "PRIMARY KEY"
+
 
 @dataclass
 class SQLColumn:
@@ -87,6 +90,34 @@ class SQLDDLParser:
 
         return tables
 
+    def _process_column_definition(
+        self, col_def: str, columns: list, primary_key: list[str], foreign_keys: list
+    ) -> bool:
+        """Process a single column definition. Returns True if processed, False otherwise."""
+        if col_def.upper().startswith(PRIMARY_KEY_CONSTRAINT):
+            self._extract_primary_key(col_def, primary_key)
+            return True
+        if col_def.upper().startswith("FOREIGN KEY"):
+            fk = self._parse_foreign_key(col_def)
+            if fk:
+                foreign_keys.append(fk)
+            return True
+        if col_def.upper().startswith("CONSTRAINT"):
+            return True
+        column = self._parse_column(col_def)
+        if column:
+            columns.append(column)
+            if column.is_primary_key:
+                primary_key.append(column.name)
+        return False
+
+    def _extract_primary_key(self, col_def: str, primary_key: list[str]) -> None:
+        """Extract primary key columns from definition."""
+        pk_match = re.search(r"PRIMARY\s+KEY\s*\(([^)]+)\)", col_def, re.IGNORECASE)
+        if pk_match:
+            pk_cols = [c.strip().strip('"') for c in pk_match.group(1).split(",")]
+            primary_key.extend(pk_cols)
+
     def _parse_table_definition(
         self, table_name: str, columns_str: str, full_sql: str, source_file: str
     ) -> ParsedTable:
@@ -103,31 +134,8 @@ class SQLDDLParser:
             if not col_def:
                 continue
 
-            # Check for PRIMARY KEY constraint
-            if col_def.upper().startswith("PRIMARY KEY"):
-                pk_match = re.search(r"PRIMARY\s+KEY\s*\(([^)]+)\)", col_def, re.IGNORECASE)
-                if pk_match:
-                    pk_cols = [c.strip().strip('"') for c in pk_match.group(1).split(",")]
-                    primary_key.extend(pk_cols)
+            if self._process_column_definition(col_def, columns, primary_key, foreign_keys):
                 continue
-
-            # Check for FOREIGN KEY constraint
-            if col_def.upper().startswith("FOREIGN KEY"):
-                fk = self._parse_foreign_key(col_def)
-                if fk:
-                    foreign_keys.append(fk)
-                continue
-
-            # Check for CONSTRAINT
-            if col_def.upper().startswith("CONSTRAINT"):
-                continue
-
-            # Parse column definition
-            column = self._parse_column(col_def)
-            if column:
-                columns.append(column)
-                if column.is_primary_key:
-                    primary_key.append(column.name)
 
         # Parse GRANT statements
         grants = self._parse_grants(full_sql, table_name)
@@ -177,7 +185,7 @@ class SQLDDLParser:
         """Parse a single column definition."""
         # Match: "COLUMN_NAME" TYPE(size) [constraints]
         # or: COLUMN_NAME TYPE(size) [constraints]
-        pattern = r'"?(\w+)"?\s+(\w+(?:\([^)]+\))?)\s*(.*)?'
+        pattern = r'"?(\w+)"?\s+(\w+(?:\([^)]+\))?)(?:\s+(.+))?'
         match = re.match(pattern, col_def.strip(), re.IGNORECASE)
 
         if not match:
@@ -192,9 +200,9 @@ class SQLDDLParser:
         is_pk = False
         is_not_null = False
 
-        if "PRIMARY KEY" in constraints_str.upper():
+        if PRIMARY_KEY_CONSTRAINT in constraints_str.upper():
             is_pk = True
-            constraints.append("PRIMARY KEY")
+            constraints.append(PRIMARY_KEY_CONSTRAINT)
 
         if "NOT NULL" in constraints_str.upper():
             is_not_null = True
@@ -383,33 +391,43 @@ def tables_to_markdown(tables: list[ParsedTable]) -> str:
     lines = ["## Database Tables\n"]
 
     for table in tables:
-        lines.append(f"### {table.table_name}")
-        lines.append(f"\n**Source:** `{table.source_file}`\n")
-
-        # Columns table
-        lines.append("| Column | Type | Constraints |")
-        lines.append("|--------|------|-------------|")
-
-        for col in table.columns:
-            constraints = ", ".join(col.constraints) if col.constraints else "—"
-            lines.append(f"| `{col.name}` | {col.data_type} | {constraints} |")
-
-        # Primary key
-        if table.primary_key:
-            lines.append(f"\n**Primary Key:** `{', '.join(table.primary_key)}`")
-
-        # Foreign keys
-        if table.foreign_keys:
-            lines.append("\n**Foreign Keys:**")
-            for fk in table.foreign_keys:
-                lines.append(
-                    f"- `{', '.join(fk.columns)}` → `{fk.references_table}({', '.join(fk.references_columns)})`"
-                )
-
-        # Grants
-        if table.grants:
-            lines.append(f"\n**Grants:** {', '.join(table.grants)}")
-
-        lines.append("\n---\n")
+        _append_table_markdown(table, lines)
 
     return "\n".join(lines)
+
+
+def _append_table_markdown(table: ParsedTable, lines: list[str]) -> None:
+    """Append markdown for a single table."""
+    lines.append(f"### {table.table_name}")
+    lines.append(f"\n**Source:** `{table.source_file}`\n")
+    _append_table_columns(table, lines)
+    _append_table_keys(table, lines)
+    _append_table_grants(table, lines)
+    lines.append("\n---\n")
+
+
+def _append_table_columns(table: ParsedTable, lines: list[str]) -> None:
+    """Append columns table to markdown."""
+    lines.append("| Column | Type | Constraints |")
+    lines.append("|--------|------|-------------|")
+    for col in table.columns:
+        constraints = ", ".join(col.constraints) if col.constraints else "—"
+        lines.append(f"| `{col.name}` | {col.data_type} | {constraints} |")
+
+
+def _append_table_keys(table: ParsedTable, lines: list[str]) -> None:
+    """Append primary and foreign keys to markdown."""
+    if table.primary_key:
+        lines.append(f"\n**Primary Key:** `{', '.join(table.primary_key)}`")
+    if table.foreign_keys:
+        lines.append("\n**Foreign Keys:**")
+        for fk in table.foreign_keys:
+            lines.append(
+                f"- `{', '.join(fk.columns)}` → `{fk.references_table}({', '.join(fk.references_columns)})`"
+            )
+
+
+def _append_table_grants(table: ParsedTable, lines: list[str]) -> None:
+    """Append grants to markdown."""
+    if table.grants:
+        lines.append(f"\n**Grants:** {', '.join(table.grants)}")

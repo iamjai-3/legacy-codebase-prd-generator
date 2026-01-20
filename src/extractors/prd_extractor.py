@@ -87,26 +87,31 @@ class PRDExtractor:
         Get the PRD directory for a specific form.
 
         Args:
-            form_name: Form identifier (e.g., "le11", "LE11")
+            form_name: Form identifier (e.g., "le11", "LE11", "leo7")
 
         Returns:
             Path to PRD directory if exists, None otherwise
         """
-        # Try different case variations
+        # Normalize form name: handle typos like "leo7" -> "le07"
+        normalized = form_name.lower().replace("leo", "le0") if "leo" in form_name.lower() else form_name
+        
+        # Try different case variations, prioritizing uppercase (standard format)
         variations = [
-            form_name.upper(),
-            form_name.lower(),
-            form_name.capitalize(),
-            form_name,
+            normalized.upper(),  # LE07, LE11 (standard format)
+            normalized.lower(),  # le07, le11
+            normalized.capitalize(),  # Le07, Le11
+            normalized,  # Original
+            form_name.upper(),  # Also try original in uppercase
+            form_name.lower(),  # Also try original in lowercase
         ]
 
         for variant in variations:
             prd_dir = self.prd_base_dir / variant
             if prd_dir.exists() and prd_dir.is_dir():
-                logger.info(f"Found PRD directory: {prd_dir}")
+                logger.info(f"Found PRD directory: {prd_dir} (searched for: {form_name})")
                 return prd_dir
 
-        logger.warning(f"No PRD directory found for form: {form_name}")
+        logger.warning(f"No PRD directory found for form: {form_name} (tried variations: {variations})")
         return None
 
     def extract_existing_prd(self, form_name: str) -> ExistingPRD | None:

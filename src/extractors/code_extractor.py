@@ -117,27 +117,9 @@ class CodeExtractor:
         extracted_files = extract_zip(zip_path, extract_dir)
 
         # Filter by dependency paths or mappings if provided
-        if dependency_paths:
-            # Use dependency paths for filtering (full path matching)
-            filtered_files = []
-            for file_path in extracted_files:
-                if match_file_path(file_path, dependency_paths, extract_dir):
-                    filtered_files.append(file_path)
-            extracted_files = filtered_files
-            logger.info(
-                "Filtered files by dependency paths",
-                total_extracted=len(extracted_files),
-                dependency_paths=len(dependency_paths),
-            )
-        elif file_mappings:
-            # Fallback to simple filename matching for backward compatibility
-            mapping_set = {Path(m).name for m in file_mappings}
-            extracted_files = [f for f in extracted_files if f.name in mapping_set]
-            logger.info(
-                "Filtered files by mappings",
-                total_extracted=len(extracted_files),
-                mappings_count=len(file_mappings),
-            )
+        extracted_files = self._filter_extracted_files(
+            extracted_files, dependency_paths, file_mappings, extract_dir
+        )
 
         # Parse code files
         code_files: list[CodeFile] = []
@@ -187,28 +169,11 @@ class CodeExtractor:
             )
 
         if dependency_paths:
-            # Process files matching dependency paths
-            for file_path in directory.rglob("*"):
-                if file_path.is_file() and is_code_file(file_path):
-                    if match_file_path(file_path, dependency_paths, directory):
-                        code_file = self._parse_code_file(file_path, directory)
-                        if code_file:
-                            code_files.append(code_file)
+            code_files = self._process_files_by_dependencies(directory, dependency_paths)
         elif file_mappings:
-            # Process specific files
-            for mapping in file_mappings:
-                file_path = directory / mapping
-                if file_path.exists() and is_code_file(file_path):
-                    code_file = self._parse_code_file(file_path, directory)
-                    if code_file:
-                        code_files.append(code_file)
+            code_files = self._process_files_by_mappings(directory, file_mappings)
         else:
-            # Process all code files recursively
-            for file_path in directory.rglob("*"):
-                if file_path.is_file() and is_code_file(file_path):
-                    code_file = self._parse_code_file(file_path, directory)
-                    if code_file:
-                        code_files.append(code_file)
+            code_files = self._process_all_code_files(directory)
 
         logger.info(
             "Extracted code files from directory",
@@ -218,6 +183,35 @@ class CodeExtractor:
         )
 
         return code_files
+
+    def _filter_extracted_files(
+        self,
+        extracted_files: list[Path],
+        dependency_paths: list[str] | None,
+        file_mappings: list[str] | None,
+        extract_dir: Path,
+    ) -> list[Path]:
+        """Filter extracted files by dependency paths or mappings."""
+        if dependency_paths:
+            filtered_files = [
+                f for f in extracted_files if match_file_path(f, dependency_paths, extract_dir)
+            ]
+            logger.info(
+                "Filtered files by dependency paths",
+                total_extracted=len(filtered_files),
+                dependency_paths=len(dependency_paths),
+            )
+            return filtered_files
+        if file_mappings:
+            mapping_set = {Path(m).name for m in file_mappings}
+            filtered_files = [f for f in extracted_files if f.name in mapping_set]
+            logger.info(
+                "Filtered files by mappings",
+                total_extracted=len(filtered_files),
+                mappings_count=len(file_mappings),
+            )
+            return filtered_files
+        return extracted_files
 
     def _parse_code_file(self, file_path: Path, base_path: Path) -> CodeFile | None:
         """
@@ -273,27 +267,30 @@ class CodeExtractor:
 
         if file_path.suffix == ".form":
             return "form_definition"
-        elif file_path.suffix == ".sql":
-            if "create table" in content.lower():
-                return "ddl"
-            elif "insert" in content.lower() or "update" in content.lower():
-                return "dml"
-            else:
-                return "query"
-        elif "adapter" in name:
+        if file_path.suffix == ".sql":
+            return self._determine_sql_type(content)
+        if "adapter" in name:
             return "adapter"
-        elif "service" in name:
+        if "service" in name:
             return "service"
-        elif "controller" in name or "action" in name:
+        if "controller" in name or "action" in name:
             return "controller"
-        elif "model" in name or "entity" in name:
+        if "model" in name or "entity" in name:
             return "model"
-        elif "util" in name or "helper" in name:
+        if "util" in name or "helper" in name:
             return "utility"
-        elif "test" in name:
+        if "test" in name:
             return "test"
-        else:
-            return "source"
+        return "source"
+
+    def _determine_sql_type(self, content: str) -> str:
+        """Determine SQL file type based on content."""
+        content_lower = content.lower()
+        if "create table" in content_lower:
+            return "ddl"
+        if "insert" in content_lower or "update" in content_lower:
+            return "dml"
+        return "query"
 
     def _extract_code_structure_ast(
         self, content: str, language: str
@@ -304,13 +301,6 @@ class CodeExtractor:
         Returns:
             Tuple of (classes, methods, imports, fields, extends, implements)
         """
-        classes: list[str] = []
-        methods: list[str] = []
-        imports: list[str] = []
-        fields: list[str] = []
-        extends: str | None = None
-        implements: list[str] = []
-
         try:
             if language == "java":
                 return self._parse_java_ast(content)
@@ -339,34 +329,46 @@ class CodeExtractor:
 
         try:
             tree = javalang.parse.parse(content)
-
-            for path, node in tree.filter(javalang.tree.Import):
-                imports.append(node.path)
-
-            for path, node in tree.filter(javalang.tree.ClassDeclaration):
-                classes.append(node.name)
-                if node.extends:
-                    extends = node.extends.name
-                if node.implements:
-                    implements.extend([i.name for i in node.implements])
-
-                for field in node.fields:
-                    for declarator in field.declarators:
-                        fields.append(declarator.name)
-
-                for method in node.methods:
-                    methods.append(method.name)
-
-            for path, node in tree.filter(javalang.tree.InterfaceDeclaration):
-                classes.append(node.name)
-                if node.extends:
-                    implements.extend([i.name for i in node.extends])
-
+            self._extract_java_imports(tree, imports)
+            extends = self._extract_java_classes(tree, classes, methods, fields, implements)
+            self._extract_java_interfaces(tree, classes, implements)
         except Exception as e:
             logger.debug(f"Javalang parse error: {e}")
             raise e
 
         return classes, methods, imports, fields, extends, implements
+
+    def _extract_java_imports(self, tree, imports: list[str]) -> None:
+        """Extract imports from Java AST."""
+        for path, node in tree.filter(javalang.tree.Import):
+            imports.append(node.path)
+
+    def _extract_java_classes(
+        self, tree, classes: list[str], methods: list[str], fields: list[str], implements: list[str]
+    ) -> str | None:
+        """Extract class declarations from Java AST."""
+        extends = None
+        for path, node in tree.filter(javalang.tree.ClassDeclaration):
+            classes.append(node.name)
+            if node.extends and extends is None:
+                extends = node.extends.name
+            if node.implements:
+                implements.extend([i.name for i in node.implements])
+
+            for field in node.fields:
+                for declarator in field.declarators:
+                    fields.append(declarator.name)
+
+            for method in node.methods:
+                methods.append(method.name)
+        return extends
+
+    def _extract_java_interfaces(self, tree, classes: list[str], implements: list[str]) -> None:
+        """Extract interface declarations from Java AST."""
+        for path, node in tree.filter(javalang.tree.InterfaceDeclaration):
+            classes.append(node.name)
+            if node.extends:
+                implements.extend([i.name for i in node.extends])
 
     def _parse_python_ast(
         self, content: str
@@ -380,36 +382,53 @@ class CodeExtractor:
 
         try:
             tree = ast.parse(content)
-
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    for alias in node.names:
-                        imports.append(alias.name)
-                elif isinstance(node, ast.ImportFrom):
-                    module = node.module or ""
-                    for alias in node.names:
-                        imports.append(f"{module}.{alias.name}")
-                elif isinstance(node, ast.ClassDef):
-                    classes.append(node.name)
-                    for base in node.bases:
-                        if isinstance(base, ast.Name):
-                            extends = base.id  # Simple single inheritance tracking for now
-
-                    # Heuristic for methods
-                    for item in node.body:
-                        if isinstance(item, ast.FunctionDef):
-                            methods.append(item.name)
-
-                elif isinstance(node, ast.FunctionDef):
-                    # Top level functions or methods (already captured if inside class)
-                    if node.name not in methods:
-                        methods.append(node.name)
+            extends_ref = [extends]
+            self._extract_python_nodes(tree, classes, methods, imports, extends_ref)
+            extends = extends_ref[0]
 
         except Exception as e:
             logger.debug(f"Python AST parse error: {e}")
             raise e
 
         return classes, methods, imports, fields, extends, []
+
+    def _extract_python_nodes(
+        self, tree, classes: list[str], methods: list[str], imports: list[str], extends_ref: list
+    ) -> None:
+        """Extract nodes from Python AST."""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                self._extract_python_imports(node, imports)
+            elif isinstance(node, ast.ImportFrom):
+                self._extract_python_import_from(node, imports)
+            elif isinstance(node, ast.ClassDef):
+                self._extract_python_class(node, classes, methods, extends_ref)
+            elif isinstance(node, ast.FunctionDef) and node.name not in methods:
+                methods.append(node.name)
+
+    def _extract_python_imports(self, node: ast.Import, imports: list[str]) -> None:
+        """Extract import statements."""
+        for alias in node.names:
+            imports.append(alias.name)
+
+    def _extract_python_import_from(self, node: ast.ImportFrom, imports: list[str]) -> None:
+        """Extract import from statements."""
+        module = node.module or ""
+        for alias in node.names:
+            imports.append(f"{module}.{alias.name}")
+
+    def _extract_python_class(
+        self, node: ast.ClassDef, classes: list[str], methods: list[str], extends_ref: list
+    ) -> None:
+        """Extract class definition."""
+        classes.append(node.name)
+        for base in node.bases:
+            if isinstance(base, ast.Name) and extends_ref[0] is None:
+                extends_ref[0] = base.id
+
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef):
+                methods.append(item.name)
 
     def _parse_sql_ast(
         self, content: str
@@ -422,72 +441,13 @@ class CodeExtractor:
         try:
             parsed = sqlparse.parse(content)
             for statement in parsed:
-                # Extract statement type (operation)
                 type_ = statement.get_type()
                 if type_ != "UNKNOWN":
                     operations.append(type_)
 
-                # Setup DDL extraction (CREATE TABLE)
                 if type_ == "CREATE":
-                    # Simple heuristic traversal for CREATE TABLE
-                    for token in statement.tokens:
-                        if isinstance(token, sqlparse.sql.Identifier):
-                            tables.append(token.get_real_name())
-                        elif isinstance(token, sqlparse.sql.Parenthesis):
-                            # Extract columns inside parenthesis
-                            for sub_token in token.tokens:
-                                if isinstance(sub_token, sqlparse.sql.IdentifierList):
-                                    for identifier in sub_token.get_identifiers():
-                                        if isinstance(identifier, sqlparse.sql.Identifier):
-                                            columns.append(identifier.get_real_name())
-                                elif isinstance(sub_token, sqlparse.sql.Identifier):
-                                    columns.append(sub_token.get_real_name())
-
-                # DML Extraction (INSERT/UPDATE/SELECT) finding tables
-                # sqlparse is tricky for this without deep traversal, using basic token matching for tables
-                from sqlparse.sql import Function, Identifier, IdentifierList
-                from sqlparse.tokens import Keyword
-
-                # Walker for Tables
-                def get_tables(stm):
-                    tables = set()
-                    idx = 0
-                    if not hasattr(stm, "tokens"):
-                        return tables
-
-                    while idx < len(stm.tokens):
-                        token = stm.tokens[idx]
-                        if token.is_group:
-                            tables.update(get_tables(token))
-
-                        # Keyword FROM or JOIN or UPDATE or INTO
-                        if token.ttype in (Keyword, Keyword.DML) and token.value.upper() in [
-                            "FROM",
-                            "JOIN",
-                            "UPDATE",
-                            "INTO",
-                        ]:
-                            # Look ahead for identifier
-                            idx += 1
-                            while idx < len(stm.tokens) and stm.tokens[idx].ttype in (
-                                sqlparse.tokens.Whitespace,
-                                sqlparse.tokens.Comment,
-                            ):
-                                idx += 1
-                            if idx < len(stm.tokens):
-                                next_token = stm.tokens[idx]
-                                if isinstance(next_token, Identifier):
-                                    tables.add(next_token.get_real_name())
-                                elif isinstance(next_token, IdentifierList):
-                                    for id_token in next_token.get_identifiers():
-                                        if isinstance(id_token, Identifier):
-                                            tables.add(id_token.get_real_name())
-                                elif isinstance(next_token, Function):
-                                    tables.add(next_token.get_real_name())
-                        idx += 1
-                    return tables
-
-                found_tables = get_tables(statement)
+                    self._extract_create_table_info(statement, tables, columns)
+                found_tables = self._extract_tables_from_statement(statement)
                 tables.extend(list(found_tables))
 
             # Dedupe
@@ -497,10 +457,75 @@ class CodeExtractor:
 
         except Exception as e:
             logger.debug(f"SQL parsing error: {e}")
-            # Fallback to simple regex for tables if sqlparse fails significantly?
-            # For now just log
 
         return tables, operations, [], columns, None, []
+
+    def _extract_create_table_info(self, statement, tables: list[str], columns: list[str]) -> None:
+        """Extract table and column info from CREATE TABLE statement."""
+        for token in statement.tokens:
+            if isinstance(token, sqlparse.sql.Identifier):
+                tables.append(token.get_real_name())
+            elif isinstance(token, sqlparse.sql.Parenthesis):
+                self._extract_columns_from_parenthesis(token, columns)
+
+    def _extract_columns_from_parenthesis(self, token, columns: list[str]) -> None:
+        """Extract columns from parenthesis token."""
+        for sub_token in token.tokens:
+            if isinstance(sub_token, sqlparse.sql.IdentifierList):
+                for identifier in sub_token.get_identifiers():
+                    if isinstance(identifier, sqlparse.sql.Identifier):
+                        columns.append(identifier.get_real_name())
+            elif isinstance(sub_token, sqlparse.sql.Identifier):
+                columns.append(sub_token.get_real_name())
+
+    def _extract_tables_from_statement(self, statement) -> set[str]:
+        """Extract table names from SQL statement."""
+
+        tables = set()
+        idx = 0
+        if not hasattr(statement, "tokens"):
+            return tables
+
+        while idx < len(statement.tokens):
+            token = statement.tokens[idx]
+            if token.is_group:
+                tables.update(self._extract_tables_from_statement(token))
+
+            if self._is_table_keyword(token):
+                idx = self._extract_table_after_keyword(statement, idx, tables)
+            idx += 1
+        return tables
+
+    def _is_table_keyword(self, token) -> bool:
+        """Check if token is a keyword that precedes table names."""
+        from sqlparse.tokens import Keyword
+
+        if token.ttype not in (Keyword, Keyword.DML):
+            return False
+        return token.value.upper() in ["FROM", "JOIN", "UPDATE", "INTO"]
+
+    def _extract_table_after_keyword(self, statement, idx: int, tables: set[str]) -> int:
+        """Extract table name after a keyword and return new index."""
+        from sqlparse.sql import Function, Identifier, IdentifierList
+        from sqlparse.tokens import Comment, Whitespace
+
+        idx += 1
+        while idx < len(statement.tokens) and statement.tokens[idx].ttype in (
+            Whitespace,
+            Comment,
+        ):
+            idx += 1
+        if idx < len(statement.tokens):
+            next_token = statement.tokens[idx]
+            if isinstance(next_token, Identifier):
+                tables.add(next_token.get_real_name())
+            elif isinstance(next_token, IdentifierList):
+                for id_token in next_token.get_identifiers():
+                    if isinstance(id_token, Identifier):
+                        tables.add(id_token.get_real_name())
+            elif isinstance(next_token, Function):
+                tables.add(next_token.get_real_name())
+        return idx
 
     def _extract_code_structure(
         self, content: str, language: str
@@ -558,9 +583,10 @@ class CodeExtractor:
             ]
             for pattern in patterns:
                 matches = re.findall(pattern, content)
-                dependencies.extend(
-                    matches if isinstance(matches[0] if matches else "", str) else []
-                )
+                if matches:
+                    first_match = matches[0]
+                    if isinstance(first_match, str):
+                        dependencies.extend(matches)
 
         return list(set(dependencies))
 
@@ -625,7 +651,7 @@ class CodeExtractor:
         self,
         form_name: str,
         mapping_file: str | Path | None = None,
-        file_patterns: list[str] | None = None,
+        file_patterns: list[str] | None = None,  # Reserved for future use
     ) -> FormMapping:
         """
         Get file mapping for a specific form.
@@ -633,11 +659,13 @@ class CodeExtractor:
         Args:
             form_name: Name of the form (e.g., 'le01')
             mapping_file: Optional JSON file with mappings
-            file_patterns: Optional list of file patterns
+            file_patterns: Optional list of file patterns (reserved for future use)
 
         Returns:
             FormMapping object
         """
+        # Suppress unused parameter warning - reserved for future use
+        _ = file_patterns
         if mapping_file:
             from src.utils.file_utils import read_json
 

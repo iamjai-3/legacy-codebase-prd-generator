@@ -3,7 +3,9 @@ Tests for AST-based Code Extraction.
 """
 
 import pytest
+
 from src.extractors.code_extractor import CodeExtractor
+
 
 class TestASTExtractor:
     """Tests for AST-based extraction in CodeExtractor."""
@@ -34,16 +36,18 @@ class TestASTExtractor:
             }
         }
         """
-        
+
         # We need to mock _determine_file_type as it is not the focus here
-        classes, methods, imports, fields, inherits, implements = extractor._extract_code_structure_ast(java_content, "java")
-        
+        classes, methods, imports, fields, inherits, implements = (
+            extractor._extract_code_structure_ast(java_content, "java")
+        )
+
         assert "UserService" in classes
         assert "findById" in methods
         assert "validate" in methods
         assert "java.util.List" in imports
         assert "com.example.model.BaseEntity" in imports
-        
+
         # New AST capabilities
         assert "userRepository" in fields
         assert "CACHE_KEY" in fields
@@ -65,14 +69,18 @@ class UserService(BaseService):
     def find_user(self, id: int) -> dict:
         return self.db.get(id)
         """
-        
-        classes, methods, imports, fields, inherits, implements = extractor._extract_code_structure_ast(python_content, "python")
-        
+
+        classes, methods, imports, fields, inherits, implements = (
+            extractor._extract_code_structure_ast(python_content, "python")
+        )
+
         assert "UserService" in classes
         assert "find_user" in methods
         assert "__init__" in methods
         assert "os" in imports
-        assert "typing.List" in imports or "List" in imports # distinct implementations might vary slightly
+        assert (
+            "typing.List" in imports or "List" in imports
+        )  # distinct implementations might vary slightly
         assert "BaseService" == inherits
         # Python doesn't have explicit interfaces in the same way, but we track inheritance
 
@@ -89,13 +97,15 @@ class UserService(BaseService):
 
         INSERT INTO audit_log (action) VALUES ('login');
         """
-        
+
         # SQL should use the AST path too now
-        classes, methods, imports, fields, inherits, implements = extractor._extract_code_structure_ast(sql_content, "sql")
-        
+        classes, methods, imports, fields, inherits, implements = (
+            extractor._extract_code_structure_ast(sql_content, "sql")
+        )
+
         assert "users" in classes  # Tables -> Classes
         assert "audit_log" in classes
-        assert "id" in fields # Columns -> Fields
+        assert "id" in fields  # Columns -> Fields
         assert "username" in fields
-        assert "SELECT" in methods # Statement Types -> Methods
+        assert "SELECT" in methods  # Statement Types -> Methods
         assert "INSERT" in methods
