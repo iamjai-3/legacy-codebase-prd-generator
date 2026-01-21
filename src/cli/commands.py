@@ -506,6 +506,76 @@ def delete_collection(
 
 
 @app.command()
+def migrate_code(
+    form_name: str = typer.Option(
+        ..., "--form-name", "-f", help="Name of the form to migrate (e.g., le01, le07)"
+    ),
+    output_dir: str = typer.Option(
+        "./output/migratedCode", "--output", "-o", help="Output directory for zip files"
+    ),
+):
+    """
+    Migrate codebase from knowledge base to .NET backend and React frontend.
+
+    Generates complete .NET backend and React frontend applications based on
+    the knowledge base context and packages them into separate zip files.
+
+    Example:
+        prd-agent migrate-code -f le07 -o ./output/migratedCode
+    """
+    from src.agents.base_agent import AgentContext
+    from src.agents.code_migration_agent import CodeMigrationAgent
+
+    console.print(
+        Panel.fit(
+            f"[bold blue]Code Migration Agent[/bold blue] - Migrating [green]{form_name}[/green]",
+            border_style="blue",
+        )
+    )
+
+    async def run_migration():
+        context = AgentContext(form_name=form_name)
+        agent = CodeMigrationAgent()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Migrating codebase...", total=None)
+
+            result = await agent.analyze(context, output_dir=output_dir)
+
+            if result.success and result.data:
+                progress.update(task, description="Migration complete!")
+                console.print("\n[green]✓ Migration successful![/green]\n")
+
+                table = Table(title="Migration Results")
+                table.add_column("Item", style="cyan")
+                table.add_column("Value", style="green")
+
+                table.add_row("Form Name", result.data.form_name)
+                table.add_row("Backend Files", str(len(result.data.backend_files)))
+                table.add_row("Frontend Files", str(len(result.data.frontend_files)))
+                table.add_row("Backend Zip", result.data.backend_zip_path)
+                table.add_row("Frontend Zip", result.data.frontend_zip_path)
+                table.add_row("Execution Time", f"{result.execution_time_ms:.2f}ms")
+
+                console.print(table)
+
+                if result.data.documentation:
+                    console.print("\n[bold]Documentation:[/bold]")
+                    console.print(
+                        Panel(result.data.documentation[:500] + "...", border_style="dim")
+                    )
+            else:
+                progress.update(task, description="Migration failed!")
+                console.print(f"\n[red]✗ Migration failed:[/red] {result.error}")
+
+    asyncio.run(run_migration())
+
+
+@app.command()
 def version():
     """Show version information."""
     from src import __version__
