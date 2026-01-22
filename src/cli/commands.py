@@ -563,11 +563,6 @@ def migrate_code(
 
                 console.print(table)
 
-                if result.data.documentation:
-                    console.print("\n[bold]Documentation:[/bold]")
-                    console.print(
-                        Panel(result.data.documentation[:500] + "...", border_style="dim")
-                    )
             else:
                 progress.update(task, description="Migration failed!")
                 console.print(f"\n[red]✗ Migration failed:[/red] {result.error}")
