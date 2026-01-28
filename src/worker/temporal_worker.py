@@ -18,7 +18,6 @@ from src.workflows.activities import (
     analyze_database_activity,
     analyze_screenshots_activity,
     analyze_user_flows_activity,
-    ensure_minio_folders_activity,
     extract_code_activity,
     extract_existing_prd_activity,
     extract_screenshots_activity,
@@ -26,6 +25,7 @@ from src.workflows.activities import (
     save_prd_activity,
     store_analysis_results_activity,
     store_vectors_activity,
+    verify_minio_bucket_activity,
 )  # noqa: F401 - activities are used at runtime
 from src.workflows.prd_generation_workflow import PRDGenerationWorkflow
 
@@ -34,14 +34,14 @@ logger = get_logger(__name__)
 # All activities to register
 ACTIVITIES = [
     # Setup activities
-    ensure_minio_folders_activity,  # Ensure MinIO folder structure exists
+    verify_minio_bucket_activity,
     # Extraction activities
     extract_code_activity,
     extract_screenshots_activity,
-    extract_existing_prd_activity,  # Extract existing PRD docs from MinIO
+    extract_existing_prd_activity,
     # Analysis activities
     analyze_screenshots_activity,
-    analyze_database_activity,  # Analyze database table mappings
+    analyze_database_activity,
     generate_requirements_activity,
     analyze_user_flows_activity,
     # Aggregation and storage activities

@@ -19,7 +19,6 @@ with workflow.unsafe.imports_passed_through():
         analyze_database_activity,
         analyze_screenshots_activity,
         analyze_user_flows_activity,
-        ensure_minio_folders_activity,
         extract_code_activity,
         extract_existing_prd_activity,
         extract_screenshots_activity,
@@ -27,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
         save_prd_activity,
         store_analysis_results_activity,
         store_vectors_activity,
+        verify_minio_bucket_activity,
     )  # noqa: F401
 
 
@@ -147,8 +147,8 @@ class PRDGenerationWorkflow:
         """Execute the PRD generation workflow."""
         workflow.logger.info(f"Starting PRD generation for {input.form_name}")
 
-        # Ensure MinIO folder structure exists for this form (non-blocking)
-        await self._ensure_minio_folders(input)
+        # Verify MinIO bucket exists (folders must be created via CLI beforehand)
+        await self._verify_minio_bucket()
 
         retry_policy = RetryPolicy(
             initial_interval=timedelta(seconds=1),
@@ -205,30 +205,23 @@ class PRDGenerationWorkflow:
             workflow.logger.error(f"Workflow failed: {str(e)}")
             return PRDGenerationOutput(form_name=input.form_name, success=False, error=str(e))
 
-    async def _ensure_minio_folders(self, input: PRDGenerationInput) -> None:
-        """Ensure MinIO folder structure exists for the form (verifies bucket exists first)."""
+    async def _verify_minio_bucket(self) -> None:
+        """Verify MinIO bucket exists. Folders must be created via CLI beforehand."""
         try:
-            # Verify bucket exists and create folders if missing (throws error if bucket missing)
             result = await workflow.execute_activity(
-                ensure_minio_folders_activity,
-                args=[input.form_name, None],  # form_name, bucket (None = use default "metadatas")
+                verify_minio_bucket_activity,
+                args=[None],  # bucket (None = use default "metadatas")
                 start_to_close_timeout=timedelta(seconds=30),
             )
             if result.get("success"):
-                workflow.logger.info(
-                    f"MinIO folder structure ensured for {input.form_name}: {result.get('form_folders', {})}"
-                )
+                workflow.logger.info(f"MinIO bucket verified: {result.get('bucket')}")
             else:
-                # Bucket doesn't exist - this is critical, workflow should fail
-                error = result.get("error", "Unknown error")
-                workflow.logger.error(f"MinIO folder setup failed for {input.form_name}: {error}")
-                raise ValueError(f"MinIO setup failed: {error}")
+                raise ValueError("MinIO bucket verification failed")
         except ValueError:
-            # Re-raise ValueError (bucket doesn't exist) to terminate workflow
             raise
         except Exception as e:
-            workflow.logger.error(f"Could not ensure MinIO folders for {input.form_name}: {str(e)}")
-            raise  # Re-raise to fail workflow
+            workflow.logger.error(f"MinIO bucket verification failed: {str(e)}")
+            raise
 
     async def _extract_data(
         self, input: PRDGenerationInput, opts: dict[str, Any]

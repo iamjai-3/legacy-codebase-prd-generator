@@ -21,10 +21,10 @@ from src.workflows.activities.extraction import (
     extract_screenshots_activity,
 )
 from src.workflows.activities.storage import (
-    ensure_minio_folders_activity,
     save_prd_activity,
     store_analysis_results_activity,
     store_vectors_activity,
+    verify_minio_bucket_activity,
 )
 
 __all__ = [
@@ -40,7 +40,7 @@ __all__ = [
     # Aggregation
     "aggregate_prd_activity",
     # Storage
-    "ensure_minio_folders_activity",
+    "verify_minio_bucket_activity",
     "store_vectors_activity",
     "store_analysis_results_activity",
     "save_prd_activity",
