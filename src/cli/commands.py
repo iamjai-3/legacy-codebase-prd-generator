@@ -513,18 +513,27 @@ def migrate_code(
     output_dir: str = typer.Option(
         "./output/migratedCode", "--output", "-o", help="Output directory for zip files"
     ),
+    db_doc_path: str = typer.Option(
+        None, "--db-doc", help="Path to database documentation (defaults to src/db_doc/Database_DOC.md)"
+    ),
+    skip_db_analysis: bool = typer.Option(
+        False, "--skip-db-analysis", help="Skip database analysis step"
+    ),
 ):
     """
     Migrate codebase from knowledge base to .NET backend and React frontend.
 
     Generates complete .NET backend and React frontend applications based on
     the knowledge base context and packages them into separate zip files.
+    After code migration, analyzes database table mappings and stores them
+    in the knowledge base for enhanced context.
 
     Example:
         prd-agent migrate-code -f le07 -o ./output/migratedCode
     """
     from src.agents.base_agent import AgentContext
     from src.agents.code_migration_agent import CodeMigrationAgent
+    from src.agents.database_analysis_agent import DatabaseAnalysisAgent
 
     console.print(
         Panel.fit(
@@ -535,37 +544,60 @@ def migrate_code(
 
     async def run_migration():
         context = AgentContext(form_name=form_name)
-        agent = CodeMigrationAgent()
+        migration_agent = CodeMigrationAgent()
+        db_agent = DatabaseAnalysisAgent()
 
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            task = progress.add_task("Migrating codebase...", total=None)
+            # Step 1: Code Migration
+            task1 = progress.add_task("Migrating codebase...", total=None)
+            migration_result = await migration_agent.analyze(context, output_dir=output_dir)
 
-            result = await agent.analyze(context, output_dir=output_dir)
+            if not migration_result.success or not migration_result.data:
+                progress.update(task1, description="Migration failed!")
+                console.print(f"\n[red]✗ Migration failed:[/red] {migration_result.error}")
+                return
 
-            if result.success and result.data:
-                progress.update(task, description="Migration complete!")
-                console.print("\n[green]✓ Migration successful![/green]\n")
+            progress.update(task1, description="Code migration complete!")
 
-                table = Table(title="Migration Results")
-                table.add_column("Item", style="cyan")
-                table.add_column("Value", style="green")
+            # Step 2: Database Analysis
+            if not skip_db_analysis:
+                task2 = progress.add_task("Analyzing database mappings...", total=None)
+                db_result = await db_agent.analyze(context, db_doc_path=db_doc_path)
 
-                table.add_row("Form Name", result.data.form_name)
-                table.add_row("Backend Files", str(len(result.data.backend_files)))
-                table.add_row("Frontend Files", str(len(result.data.frontend_files)))
-                table.add_row("Backend Zip", result.data.backend_zip_path)
-                table.add_row("Frontend Zip", result.data.frontend_zip_path)
-                table.add_row("Execution Time", f"{result.execution_time_ms:.2f}ms")
+                if db_result.success and db_result.data:
+                    progress.update(task2, description="Database analysis complete!")
+                    console.print("\n[green]✓ Database analysis successful![/green]")
+                else:
+                    progress.update(task2, description="Database analysis failed!")
+                    console.print(
+                        f"\n[yellow]⚠ Database analysis failed:[/yellow] {db_result.error}"
+                    )
 
-                console.print(table)
+            # Display results
+            console.print("\n[green]✓ Migration successful![/green]\n")
 
-            else:
-                progress.update(task, description="Migration failed!")
-                console.print(f"\n[red]✗ Migration failed:[/red] {result.error}")
+            table = Table(title="Migration Results")
+            table.add_column("Item", style="cyan")
+            table.add_column("Value", style="green")
+
+            table.add_row("Form Name", migration_result.data.form_name)
+            table.add_row("Backend Files", str(len(migration_result.data.backend_files)))
+            table.add_row("Frontend Files", str(len(migration_result.data.frontend_files)))
+            table.add_row("Backend Zip", migration_result.data.backend_zip_path)
+            table.add_row("Frontend Zip", migration_result.data.frontend_zip_path)
+            table.add_row("Execution Time", f"{migration_result.execution_time_ms:.2f}ms")
+
+            if not skip_db_analysis and db_result.success and db_result.data:
+                table.add_row("", "")  # Separator
+                table.add_row("Database Tables Analyzed", str(db_result.data.tables_analyzed))
+                table.add_row("Relationships Mapped", str(db_result.data.relationships_mapped))
+                table.add_row("Vectors Stored", str(db_result.data.vectors_stored))
+
+            console.print(table)
 
     asyncio.run(run_migration())
 

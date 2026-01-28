@@ -166,7 +166,9 @@ class CodeMigrationAgent(BaseAgent[CodeMigrationResult]):
 
         for key, query in queries.items():
             try:
-                results = self.retrieve_context(form_name, query, limit=10, doc_type="code")
+                # For database queries, use doc_type="database" to get database analysis results
+                doc_type = "database" if key == "database" else "code"
+                results = self.retrieve_context(form_name, query, limit=10, doc_type=doc_type)
                 contexts[key] = results
                 self.logger.debug(f"Retrieved {len(results)} contexts for {key}")
             except Exception as e:
