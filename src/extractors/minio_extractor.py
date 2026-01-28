@@ -34,6 +34,19 @@ class Screenshot:
     metadata: dict[str, Any]
 
 
+# Screen type mapping for cleaner code
+SCREEN_TYPE_KEYWORDS: dict[str, list[str]] = {
+    "main_screen": ["main", "home"],
+    "form_screen": ["form", "input"],
+    "list_screen": ["list", "grid"],
+    "detail_screen": ["detail", "view"],
+    "dialog": ["dialog", "modal", "popup"],
+    "navigation": ["menu", "nav"],
+    "error_screen": ["error", "warning"],
+    "report": ["report", "print"],
+}
+
+
 class MinioExtractor:
     """
     Extracts screenshots from Minio object storage for a given form.
@@ -41,6 +54,7 @@ class MinioExtractor:
     """
 
     SUPPORTED_FORMATS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+    DEFAULT_CONTENT_TYPE = "image/png"
 
     def __init__(self) -> None:
         """Initialize the Minio extractor."""
@@ -69,140 +83,146 @@ class MinioExtractor:
         Args:
             form_name: Name of the form (e.g., 'le01')
             bucket: Optional bucket name (defaults to configured bucket)
-            prefix: Optional prefix to filter objects (if None, searches all images in bucket)
+            prefix: Optional prefix to filter objects
 
         Returns:
             List of Screenshot objects, sorted by object name
         """
         bucket = bucket or self.settings.minio.bucket
+        self._verify_bucket_exists(bucket)
 
-        screenshots: list[Screenshot] = []
+        search_prefix = self._get_search_prefix(form_name, prefix)
+        all_objects = self._list_objects_with_prefix(bucket, search_prefix)
+        image_objects = self._filter_image_objects(all_objects, form_name, bucket)
 
-        try:
-            # Verify bucket exists (required - don't create)
-            if not self.client.bucket_exists(bucket):
-                error_msg = f"Bucket '{bucket}' does not exist. Please create the 'metadatas' bucket in MinIO first."
-                logger.error(error_msg)
-                raise ValueError(error_msg)
+        logger.info(
+            f"Processing {len(image_objects)} images",
+            form_name=form_name,
+            bucket=bucket,
+        )
 
-            # Determine search strategy:
-            # Use FORMS/{FORM_NAME}/UI_SCREENSHOTS/ structure within the metadatas bucket
-            form_name_upper = form_name.upper()
-            form_screenshots_prefix = f"FORMS/{form_name_upper}/UI_SCREENSHOTS/"
+        screenshots = self._fetch_screenshots(image_objects, bucket, form_name)
 
-            search_prefixes: list[str | None] = []
-
-            if prefix is not None:
-                # Explicit prefix provided
-                search_prefixes = [prefix]
-            else:
-                # Use standard structure: FORMS/{FORM_NAME}/UI_SCREENSHOTS/
-                search_prefixes = [form_screenshots_prefix]
-                logger.info(
-                    "Searching screenshots in MinIO", bucket=bucket, prefix=form_screenshots_prefix
-                )
-
-            all_objects: list[Any] = []
-
-            # Collect all matching objects
-            for search_prefix in search_prefixes:
-                try:
-                    objects = list(
-                        self.client.list_objects(
-                            bucket,
-                            prefix=search_prefix,
-                            recursive=True,
-                        )
-                    )
-
-                    if objects:
-                        all_objects.extend(objects)
-                        logger.info(f"Found {len(objects)} objects with prefix '{search_prefix}'")
-                        # If we found objects with a prefix, don't try the fallback
-                        if search_prefix is not None:
-                            break
-                except S3Error as e:
-                    logger.warning(f"Error listing objects with prefix '{search_prefix}': {e}")
-                    continue
-
-            # Filter and process images
-            image_objects = []
-            for obj in all_objects:
-                # Check if it's a supported image format
-                ext = Path(obj.object_name).suffix.lower()
-                if ext in self.SUPPORTED_FORMATS:
-                    # If bucket name is form name, include ALL images in the bucket
-                    # (the bucket itself provides the form context)
-                    if bucket.lower() == form_name.lower():
-                        image_objects.append(obj)
-                    else:
-                        # For general buckets, filter by form name in path
-                        obj_name_lower = obj.object_name.lower()
-                        form_name_lower = form_name.lower()
-                        if (
-                            obj_name_lower.startswith(form_name_lower)
-                            or f"/{form_name_lower}/" in obj_name_lower
-                            or obj_name_lower.startswith(f"{form_name_lower}.")
-                        ):
-                            image_objects.append(obj)
-
-            # Sort by object name to process in order
-            image_objects.sort(key=lambda x: x.object_name)
-
-            logger.info(
-                f"Processing {len(image_objects)} images in order",
-                form_name=form_name,
-                bucket=bucket,
-            )
-
-            # Process each image
-            for obj in image_objects:
-                try:
-                    # Get the object
-                    response = self.client.get_object(bucket, obj.object_name)
-                    image_data = response.read()
-                    response.close()
-                    response.release_conn()
-
-                    # Determine screen type from filename
-                    screen_type = self._determine_screen_type(obj.object_name)
-
-                    screenshot = Screenshot(
-                        object_name=obj.object_name,
-                        bucket=bucket,
-                        form_name=form_name,
-                        screen_type=screen_type,
-                        image_data=image_data,
-                        content_type=obj.content_type or f"image/{ext[1:]}",
-                        size=obj.size,
-                        metadata=obj.metadata or {},
-                    )
-                    screenshots.append(screenshot)
-
-                    logger.debug(
-                        "Retrieved screenshot",
-                        object_name=obj.object_name,
-                        screen_type=screen_type,
-                        size=obj.size,
-                    )
-
-                except S3Error as e:
-                    logger.warning(
-                        "Failed to retrieve screenshot", object_name=obj.object_name, error=str(e)
-                    )
-
-            logger.info(
-                "Retrieved screenshots from Minio",
-                form_name=form_name,
-                bucket=bucket,
-                count=len(screenshots),
-            )
-
-        except S3Error as e:
-            logger.error("Minio error", error=str(e))
-            raise
+        logger.info(
+            "Retrieved screenshots from Minio",
+            form_name=form_name,
+            bucket=bucket,
+            count=len(screenshots),
+        )
 
         return screenshots
+
+    def _verify_bucket_exists(self, bucket: str) -> None:
+        """Verify bucket exists, raise error if not."""
+        if not self.client.bucket_exists(bucket):
+            error_msg = f"Bucket '{bucket}' does not exist. Please create it in MinIO first."
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+    def _get_search_prefix(self, form_name: str, prefix: str | None) -> str:
+        """Get the search prefix for listing objects."""
+        if prefix is not None:
+            return prefix
+        form_name_upper = form_name.upper()
+        search_prefix = f"FORMS/{form_name_upper}/UI_SCREENSHOTS/"
+        logger.info("Searching screenshots in MinIO", prefix=search_prefix)
+        return search_prefix
+
+    def _list_objects_with_prefix(self, bucket: str, prefix: str) -> list[Any]:
+        """List objects in bucket with given prefix."""
+        try:
+            objects = list(self.client.list_objects(bucket, prefix=prefix, recursive=True))
+            if objects:
+                logger.info(f"Found {len(objects)} objects with prefix '{prefix}'")
+            return objects
+        except S3Error as e:
+            logger.warning(f"Error listing objects with prefix '{prefix}': {e}")
+            return []
+
+    def _filter_image_objects(self, objects: list[Any], form_name: str, bucket: str) -> list[Any]:
+        """Filter objects to only include supported image formats."""
+        image_objects = []
+        form_name_lower = form_name.lower()
+        bucket_lower = bucket.lower()
+
+        for obj in objects:
+            ext = Path(obj.object_name).suffix.lower()
+            if ext not in self.SUPPORTED_FORMATS:
+                continue
+
+            if self._should_include_object(obj, form_name_lower, bucket_lower):
+                image_objects.append(obj)
+
+        # Sort by object name for consistent ordering
+        image_objects.sort(key=lambda x: x.object_name)
+        return image_objects
+
+    def _should_include_object(self, obj: Any, form_name_lower: str, bucket_lower: str) -> bool:
+        """Check if object should be included based on form name."""
+        # If bucket name matches form name, include all images
+        if bucket_lower == form_name_lower:
+            return True
+
+        # Otherwise, filter by form name in path
+        obj_name_lower = obj.object_name.lower()
+        return (
+            obj_name_lower.startswith(form_name_lower)
+            or f"/{form_name_lower}/" in obj_name_lower
+            or obj_name_lower.startswith(f"{form_name_lower}.")
+        )
+
+    def _fetch_screenshots(
+        self, objects: list[Any], bucket: str, form_name: str
+    ) -> list[Screenshot]:
+        """Fetch screenshot data for each object."""
+        screenshots: list[Screenshot] = []
+
+        for obj in objects:
+            screenshot = self._fetch_single_screenshot(obj, bucket, form_name)
+            if screenshot:
+                screenshots.append(screenshot)
+
+        return screenshots
+
+    def _fetch_single_screenshot(self, obj: Any, bucket: str, form_name: str) -> Screenshot | None:
+        """Fetch a single screenshot from MinIO."""
+        try:
+            response = self.client.get_object(bucket, obj.object_name)
+            image_data = response.read()
+            response.close()
+            response.release_conn()
+
+            ext = Path(obj.object_name).suffix.lower()
+            screen_type = self._determine_screen_type(obj.object_name)
+            content_type = obj.content_type or f"image/{ext[1:]}"
+
+            screenshot = Screenshot(
+                object_name=obj.object_name,
+                bucket=bucket,
+                form_name=form_name,
+                screen_type=screen_type,
+                image_data=image_data,
+                content_type=content_type,
+                size=obj.size,
+                metadata=obj.metadata or {},
+            )
+
+            logger.debug(
+                "Retrieved screenshot",
+                object_name=obj.object_name,
+                screen_type=screen_type,
+                size=obj.size,
+            )
+
+            return screenshot
+
+        except S3Error as e:
+            logger.warning(
+                "Failed to retrieve screenshot",
+                object_name=obj.object_name,
+                error=str(e),
+            )
+            return None
 
     def get_screenshot(self, bucket: str, object_name: str) -> Screenshot | None:
         """
@@ -223,6 +243,7 @@ class MinioExtractor:
 
             ext = Path(object_name).suffix.lower()
             screen_type = self._determine_screen_type(object_name)
+            content_type = f"image/{ext[1:]}" if ext else self.DEFAULT_CONTENT_TYPE
 
             return Screenshot(
                 object_name=object_name,
@@ -230,11 +251,11 @@ class MinioExtractor:
                 form_name=Path(object_name).stem,
                 screen_type=screen_type,
                 image_data=image_data,
-                content_type=f"image/{ext[1:]}" if ext else "image/png",
+                content_type=content_type,
                 size=len(image_data),
                 metadata={},
             )
-        except Exception as e:
+        except S3Error as e:
             logger.warning(
                 "Failed to get screenshot from Minio",
                 bucket=bucket,
@@ -247,24 +268,11 @@ class MinioExtractor:
         """Determine the type of screen from the object name."""
         name_lower = object_name.lower()
 
-        if "main" in name_lower or "home" in name_lower:
-            return "main_screen"
-        elif "form" in name_lower or "input" in name_lower:
-            return "form_screen"
-        elif "list" in name_lower or "grid" in name_lower:
-            return "list_screen"
-        elif "detail" in name_lower or "view" in name_lower:
-            return "detail_screen"
-        elif "dialog" in name_lower or "modal" in name_lower or "popup" in name_lower:
-            return "dialog"
-        elif "menu" in name_lower or "nav" in name_lower:
-            return "navigation"
-        elif "error" in name_lower or "warning" in name_lower:
-            return "error_screen"
-        elif "report" in name_lower or "print" in name_lower:
-            return "report"
-        else:
-            return "general"
+        for screen_type, keywords in SCREEN_TYPE_KEYWORDS.items():
+            if any(keyword in name_lower for keyword in keywords):
+                return screen_type
+
+        return "general"
 
     def save_screenshots_locally(
         self, screenshots: list[Screenshot], output_dir: str | Path
@@ -279,26 +287,31 @@ class MinioExtractor:
         Returns:
             List of saved file paths
         """
-        output_dir = ensure_directory(output_dir)
+        output_path = ensure_directory(output_dir)
         saved_paths: list[Path] = []
 
         for screenshot in screenshots:
-            # Create subdirectory for form
-            form_dir = output_dir / screenshot.form_name
-            ensure_directory(form_dir)
-
-            # Save the image
-            filename = Path(screenshot.object_name).name
-            file_path = form_dir / filename
-
-            with open(file_path, "wb") as f:
-                f.write(screenshot.image_data)
-
+            file_path = self._save_single_screenshot(screenshot, output_path)
             saved_paths.append(file_path)
 
-        logger.info("Saved screenshots locally", count=len(saved_paths), directory=str(output_dir))
+        logger.info(
+            "Saved screenshots locally",
+            count=len(saved_paths),
+            directory=str(output_path),
+        )
 
         return saved_paths
+
+    def _save_single_screenshot(self, screenshot: Screenshot, output_dir: Path) -> Path:
+        """Save a single screenshot to the filesystem."""
+        form_dir = output_dir / screenshot.form_name
+        ensure_directory(form_dir)
+
+        filename = Path(screenshot.object_name).name
+        file_path = form_dir / filename
+
+        file_path.write_bytes(screenshot.image_data)
+        return file_path
 
     def get_image_base64(self, screenshot: Screenshot) -> str:
         """
@@ -338,42 +351,40 @@ class MinioExtractor:
         Returns:
             List of LangChain Documents
         """
-        documents: list[Document] = []
-
-        for screenshot in screenshots:
-            width, height = self.get_image_dimensions(screenshot)
-
-            content_parts = [
-                f"Screenshot: {screenshot.object_name}",
-                f"Form: {screenshot.form_name}",
-                f"Screen Type: {screenshot.screen_type}",
-                f"Dimensions: {width}x{height}",
-                f"Size: {screenshot.size} bytes",
-            ]
-
-            if include_base64:
-                content_parts.append(f"Base64: {self.get_image_base64(screenshot)}")
-
-            metadata = {
-                "form_name": screenshot.form_name,
-                "object_name": screenshot.object_name,
-                "screen_type": screenshot.screen_type,
-                "width": width,
-                "height": height,
-                "size_bytes": screenshot.size,
-                "content_type": screenshot.content_type,
-                "doc_type": "screenshot",
-            }
-
-            document = Document(
-                page_content="\n".join(content_parts),
-                metadata=metadata,
-            )
-            documents.append(document)
+        documents = [
+            self._screenshot_to_document(screenshot, include_base64) for screenshot in screenshots
+        ]
 
         logger.info("Converted screenshots to documents", count=len(documents))
-
         return documents
+
+    def _screenshot_to_document(self, screenshot: Screenshot, include_base64: bool) -> Document:
+        """Convert a single screenshot to a LangChain Document."""
+        width, height = self.get_image_dimensions(screenshot)
+
+        content_parts = [
+            f"Screenshot: {screenshot.object_name}",
+            f"Form: {screenshot.form_name}",
+            f"Screen Type: {screenshot.screen_type}",
+            f"Dimensions: {width}x{height}",
+            f"Size: {screenshot.size} bytes",
+        ]
+
+        if include_base64:
+            content_parts.append(f"Base64: {self.get_image_base64(screenshot)}")
+
+        metadata = {
+            "form_name": screenshot.form_name,
+            "object_name": screenshot.object_name,
+            "screen_type": screenshot.screen_type,
+            "width": width,
+            "height": height,
+            "size_bytes": screenshot.size,
+            "content_type": screenshot.content_type,
+            "doc_type": "screenshot",
+        }
+
+        return Document(page_content="\n".join(content_parts), metadata=metadata)
 
     def upload_screenshot(
         self, file_path: str | Path, form_name: str, bucket: str | None = None
@@ -388,18 +399,17 @@ class MinioExtractor:
 
         Returns:
             Object name in Minio
+
+        Raises:
+            ValueError: If bucket does not exist
         """
         file_path = Path(file_path)
         bucket = bucket or self.settings.minio.bucket
         object_name = f"{form_name}/{file_path.name}"
 
-        # Ensure bucket exists
-        if not self.client.bucket_exists(bucket):
-            self.client.make_bucket(bucket)
+        self._verify_bucket_exists(bucket)
 
-        # Upload file
         self.client.fput_object(bucket, object_name, str(file_path))
-
         logger.info("Uploaded screenshot", object_name=object_name, bucket=bucket)
 
         return object_name

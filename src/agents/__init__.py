@@ -1,6 +1,5 @@
-"""Specialized agents for PRD generation."""
+"""Specialized agents for PRD generation and code migration."""
 
-from src.agents.atlassian_integration_agent import AtlassianIntegrationAgent
 from src.agents.base_agent import BaseAgent
 from src.agents.code_migration_agent import CodeMigrationAgent
 from src.agents.database_analysis_agent import DatabaseAnalysisAgent
@@ -12,7 +11,6 @@ from src.agents.user_flow_agent import UserFlowAgent
 __all__ = [
     "BaseAgent",
     "ScreenshotAnalysisAgent",
-    "AtlassianIntegrationAgent",
     "RequirementsGeneratorAgent",
     "UserFlowAgent",
     "PRDAggregatorAgent",

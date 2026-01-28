@@ -69,27 +69,6 @@ class MinioSettings(BaseSettings):
     secure: bool = Field(default=False, description="Use HTTPS")
 
 
-class JiraSettings(BaseSettings):
-    """Jira/Atlassian configuration."""
-
-    model_config = SettingsConfigDict(env_prefix="JIRA_", extra="ignore")
-
-    url: str = Field(default="", description="Jira instance URL")
-    username: str = Field(default="", description="Jira username/email")
-    api_token: str = Field(default="", description="Jira API token")
-    project_key: str | None = Field(default=None, description="Default project key")
-
-
-class ConfluenceSettings(BaseSettings):
-    """Confluence configuration."""
-
-    model_config = SettingsConfigDict(env_prefix="CONFLUENCE_", extra="ignore")
-
-    url: str = Field(default="", description="Confluence instance URL")
-    username: str = Field(default="", description="Confluence username/email")
-    api_token: str = Field(default="", description="Confluence API token")
-
-
 class Settings(BaseSettings):
     """Main application settings aggregating all configuration."""
 
@@ -100,8 +79,6 @@ class Settings(BaseSettings):
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     temporal: TemporalSettings = Field(default_factory=TemporalSettings)
     minio: MinioSettings = Field(default_factory=MinioSettings)
-    jira: JiraSettings = Field(default_factory=JiraSettings)
-    confluence: ConfluenceSettings = Field(default_factory=ConfluenceSettings)
 
     # Application settings
     log_level: str = Field(default="INFO", description="Logging level")

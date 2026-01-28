@@ -1,5 +1,3 @@
-"""Generators module for PRD document generation."""
+"""Generators module - reserved for future use."""
 
-from src.generators.prd_generator import PRDGenerator
-
-__all__ = ["PRDGenerator"]
+__all__: list[str] = []

@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from src.agents.atlassian_integration_agent import AtlassianIntegrationResult
 from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
 from src.agents.requirements_generator_agent import RequirementsGeneratorResult
 from src.agents.screenshot_analysis_agent import ScreenshotAnalysisResult
@@ -84,7 +83,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         self,
         context: AgentContext,
         screenshot_analysis: ScreenshotAnalysisResult | None = None,
-        atlassian_analysis: AtlassianIntegrationResult | None = None,
+        atlassian_analysis: Any | None = None,  # Deprecated, always None
         requirements_analysis: RequirementsGeneratorResult | None = None,
         user_flow_analysis: UserFlowResult | None = None,
         database_analysis: dict[str, Any] | None = None,
@@ -209,7 +208,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         self,
         context: AgentContext,
         screenshot_analysis: ScreenshotAnalysisResult | None,
-        atlassian_analysis: AtlassianIntegrationResult | None,
+        atlassian_analysis: Any | None,
         requirements_analysis: RequirementsGeneratorResult | None,
         user_flow_analysis: UserFlowResult | None,
         kb_contexts: dict[str, list[str]],
@@ -385,7 +384,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         executive_summary: str,
         appendices: list[dict[str, str]],
         screenshot_analysis: ScreenshotAnalysisResult | None,
-        atlassian_analysis: AtlassianIntegrationResult | None,
+        atlassian_analysis: Any | None,
         requirements_analysis: RequirementsGeneratorResult | None,
     ) -> PRDDocument:
         """Create the PRD document structure."""
@@ -445,7 +444,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
     async def _generate_overview_section(
         self,
         context: AgentContext,
-        atlassian_analysis: AtlassianIntegrationResult | None,
+        atlassian_analysis: Any | None,
         kb_contexts: dict[str, list[str]],
         order: int,
     ) -> PRDSection:

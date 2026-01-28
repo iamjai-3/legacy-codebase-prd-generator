@@ -69,53 +69,6 @@ def reconstruct_screenshot_analysis(data: dict[str, Any] | None, form_name: str)
     )
 
 
-def reconstruct_atlassian_analysis(data: dict[str, Any] | None, form_name: str) -> Any:
-    """
-    Reconstruct AtlassianIntegrationResult from serialized dict.
-
-    Args:
-        data: Serialized Jira analysis data
-        form_name: Form name for the result
-
-    Returns:
-        AtlassianIntegrationResult or None
-    """
-    if not data or not data.get("success"):
-        return None
-
-    from src.agents.atlassian_integration_agent import (
-        AtlassianIntegrationResult,
-        RequirementItem,
-    )
-
-    requirements = [
-        RequirementItem(
-            source_key=req.get("source_key", ""),
-            requirement_type=req.get("requirement_type", ""),
-            title=req.get("title", ""),
-            description=req.get("description", ""),
-            priority=req.get("priority", ""),
-            acceptance_criteria=req.get("acceptance_criteria", []),
-            dependencies=req.get("dependencies", []),
-        )
-        for req in data.get("requirements", [])
-    ]
-
-    return AtlassianIntegrationResult(
-        form_name=form_name,
-        total_issues=data.get("total_issues", 0),
-        issues_by_type=data.get("issues_by_type", {}),
-        issues_by_status=data.get("issues_by_status", {}),
-        requirements=requirements,
-        business_rules=data.get("business_rules", []),
-        technical_constraints=data.get("technical_constraints", []),
-        stakeholder_notes=data.get("stakeholder_notes", []),
-        open_questions=data.get("open_questions", []),
-        documentation_gaps=data.get("documentation_gaps", []),
-        summary=data.get("summary", ""),
-    )
-
-
 def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: str) -> Any:
     """
     Reconstruct RequirementsGeneratorResult from serialized dict.
