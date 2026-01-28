@@ -4,7 +4,6 @@ from typing import Any
 
 from temporalio import activity
 
-from src.agents.atlassian_integration_agent import AtlassianIntegrationAgent
 from src.agents.base_agent import AgentContext
 from src.agents.database_analysis_agent import DatabaseAnalysisAgent
 from src.agents.requirements_generator_agent import RequirementsGeneratorAgent
@@ -40,42 +39,6 @@ async def analyze_screenshots_activity(
             "common_patterns": result.data.common_patterns,
             "component_inventory": result.data.component_inventory,
             "recommendations": result.data.recommendations,
-            "execution_time_ms": result.execution_time_ms,
-        }
-
-    return {
-        "success": False,
-        "error": result.error,
-        "execution_time_ms": result.execution_time_ms,
-    }
-
-
-@activity.defn
-async def analyze_jira_activity(
-    form_name: str,
-    jira_data: dict[str, Any],
-) -> dict[str, Any]:
-    """Analyze Jira issues using the AtlassianIntegrationAgent."""
-    logger.info("Starting Jira analysis", form_name=form_name)
-
-    agent = AtlassianIntegrationAgent()
-    context = AgentContext(form_name=form_name)
-    issues = jira_data.get("raw_issues", [])
-
-    result = await agent.analyze(context, issues=issues)
-
-    if result.success and result.data:
-        return {
-            "success": True,
-            "total_issues": result.data.total_issues,
-            "issues_by_type": result.data.issues_by_type,
-            "issues_by_status": result.data.issues_by_status,
-            "requirements": [to_dict(r) for r in result.data.requirements],
-            "business_rules": result.data.business_rules,
-            "technical_constraints": result.data.technical_constraints,
-            "open_questions": result.data.open_questions,
-            "documentation_gaps": result.data.documentation_gaps,
-            "summary": result.data.summary,
             "execution_time_ms": result.execution_time_ms,
         }
 

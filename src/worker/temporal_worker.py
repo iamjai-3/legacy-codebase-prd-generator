@@ -16,12 +16,11 @@ from src.utils.logging_config import get_logger, setup_logging
 from src.workflows.activities import (
     aggregate_prd_activity,
     analyze_database_activity,
-    analyze_jira_activity,
     analyze_screenshots_activity,
     analyze_user_flows_activity,
+    ensure_minio_folders_activity,
     extract_code_activity,
     extract_existing_prd_activity,
-    extract_jira_activity,
     extract_screenshots_activity,
     generate_requirements_activity,
     save_prd_activity,
@@ -34,14 +33,14 @@ logger = get_logger(__name__)
 
 # All activities to register
 ACTIVITIES = [
+    # Setup activities
+    ensure_minio_folders_activity,  # Ensure MinIO folder structure exists
     # Extraction activities
     extract_code_activity,
     extract_screenshots_activity,
-    extract_jira_activity,
-    extract_existing_prd_activity,  # Extract existing PRD docs for knowledge base
+    extract_existing_prd_activity,  # Extract existing PRD docs from MinIO
     # Analysis activities
     analyze_screenshots_activity,
-    analyze_jira_activity,
     analyze_database_activity,  # Analyze database table mappings
     generate_requirements_activity,
     analyze_user_flows_activity,

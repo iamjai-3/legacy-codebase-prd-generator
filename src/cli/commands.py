@@ -8,6 +8,7 @@ Usage:
 """
 
 import asyncio
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -17,6 +18,8 @@ from rich.table import Table
 from temporalio.client import Client
 
 from src.config.settings import get_settings
+
+settings = get_settings()
 from src.utils.logging_config import get_logger, setup_logging
 from src.vector_store.qdrant_manager import QdrantManager
 from src.workflows.prd_generation_workflow import (
@@ -45,43 +48,26 @@ def generate(
     form_name: str = typer.Option(
         ..., "--form-name", "-f", help="Name of the form to analyze (e.g., le01, ea01)"
     ),
-    zip_path: str | None = typer.Option(None, "--zip-path", "-z", help="Path to the code ZIP file"),
-    code_dir: str | None = typer.Option(
-        None, "--code-dir", "-c", help="Path to the code directory"
-    ),
-    file_mappings: str | None = typer.Option(
-        None, "--mappings", "-m", help="Comma-separated file paths to include"
-    ),
-    dependency_file: str | None = typer.Option(
-        None, "--dependency-file", "-d", help="Path to dependency file with file paths to include"
-    ),
-    minio_bucket: str | None = typer.Option(
-        None, "--bucket", "-b", help="Minio bucket for screenshots"
-    ),
-    jira_project: str | None = typer.Option(None, "--jira-project", "-j", help="Jira project key"),
-    output_dir: str = typer.Option("./output", "--output", "-o", help="Output directory for PRD"),
-    skip_screenshots: bool = typer.Option(
-        False, "--skip-screenshots", help="Skip screenshot analysis"
-    ),
-    skip_jira: bool = typer.Option(False, "--skip-jira", help="Skip Jira integration"),
-    recreate_vectors: bool = typer.Option(
-        False, "--recreate-vectors", help="Recreate vector collection"
-    ),
-    db_doc_path: str | None = typer.Option(
-        None, "--db-doc", help="Path to database documentation (defaults to src/db_doc/Database_DOC.md)"
-    ),
-    skip_database_analysis: bool = typer.Option(
-        False, "--skip-db-analysis", help="Skip database table mapping analysis"
-    ),
-    use_workflow: bool = typer.Option(
-        True, "--use-workflow/--direct", help="Use Temporal workflow or direct execution"
-    ),
+    zip_path: str | None = typer.Option(None, "--zip-path", "-z", help="Path to code ZIP file (if not provided, loads from MinIO LEGACY_CODEBASE/)"),
+    code_dir: str | None = typer.Option(None, "--code-dir", "-c", help="Path to code directory (if not provided, loads from MinIO LEGACY_CODEBASE/)"),
+    output_dir: str = typer.Option("./output", "--output", "-o", help="Output directory"),
+    minio_bucket: str | None = typer.Option(None, "--bucket", "-b", help="MinIO bucket name"),
 ):
     """
     Generate a PRD for a legacy form/module.
 
+    Dependencies are automatically loaded from MinIO:
+    FORMS/{FORM_NAME}/FORM_FILE_DEPENDENCIES/{FORM_NAME}_dependencies.txt
+
+    Legacy codebase is automatically loaded from MinIO if -z/-c not provided:
+    LEGACY_CODEBASE/*.zip
+
     Example:
-        prd-agent generate -f le01 -z ./code.zip -o ./output
+        # Using local ZIP file
+        prd-agent generate -f le11 -z ./code.zip -o ./output
+        
+        # Using MinIO (no -z or -c needed)
+        prd-agent generate -f le11 -o ./output
     """
     console.print(
         Panel.fit(
@@ -90,63 +76,23 @@ def generate(
         )
     )
 
-    if not zip_path and not code_dir:
-        console.print(
-            "[yellow]Warning:[/yellow] No code source provided. Will use vector store context only."
+    asyncio.run(
+        _run_workflow_generation(
+            form_name=form_name,
+            zip_path=zip_path,
+            code_dir=code_dir,
+            minio_bucket=minio_bucket,
+            output_dir=output_dir,
         )
-
-    mappings_list = file_mappings.split(",") if file_mappings else None
-
-    if use_workflow:
-        asyncio.run(
-            _run_workflow_generation(
-                form_name=form_name,
-                zip_path=zip_path,
-                code_dir=code_dir,
-                file_mappings=mappings_list,
-                dependency_file=dependency_file,
-                minio_bucket=minio_bucket,
-                jira_project=jira_project,
-                output_dir=output_dir,
-                skip_screenshots=skip_screenshots,
-                skip_jira=skip_jira,
-                recreate_vectors=recreate_vectors,
-                db_doc_path=db_doc_path,
-                skip_database_analysis=skip_database_analysis,
-            )
-        )
-    else:
-        asyncio.run(
-            _run_direct_generation(
-                form_name=form_name,
-                zip_path=zip_path,
-                code_dir=code_dir,
-                file_mappings=mappings_list,
-                dependency_file=dependency_file,
-                minio_bucket=minio_bucket,
-                jira_project=jira_project,
-                output_dir=output_dir,
-                skip_screenshots=skip_screenshots,
-                skip_jira=skip_jira,
-                recreate_vectors=recreate_vectors,
-            )
-        )
+    )
 
 
 async def _run_workflow_generation(
     form_name: str,
     zip_path: str | None,
     code_dir: str | None,
-    file_mappings: list[str] | None,
-    dependency_file: str | None,
     minio_bucket: str | None,
-    jira_project: str | None,
     output_dir: str,
-    skip_screenshots: bool,
-    skip_jira: bool,
-    recreate_vectors: bool,
-    db_doc_path: str | None = None,
-    skip_database_analysis: bool = False,
 ):
     """Run PRD generation via Temporal workflow."""
     settings = get_settings()
@@ -169,16 +115,8 @@ async def _run_workflow_generation(
                 form_name=form_name,
                 zip_path=zip_path,
                 code_directory=code_dir,
-                file_mappings=file_mappings,
-                dependency_file=dependency_file,
                 minio_bucket=minio_bucket,
-                jira_project_key=jira_project,
                 output_dir=output_dir,
-                skip_screenshots=skip_screenshots,
-                skip_jira=skip_jira,
-                recreate_vector_collection=recreate_vectors,
-                db_doc_path=db_doc_path,
-                skip_database_analysis=skip_database_analysis,
             )
 
             # Execute workflow
@@ -206,200 +144,8 @@ async def _run_workflow_generation(
             raise typer.Exit(1)
 
 
-def _get_successful_data(result):
-    """Extract data from result if successful, otherwise return None."""
-    if result is None:
-        return None
-    return result.data if result.success else None
 
 
-def _extract_code_files(
-    zip_path: str | None,
-    code_dir: str | None,
-    file_mappings: list[str] | None,
-    dependency_file: str | None = None,
-):
-    """Extract code files from zip or directory."""
-    from src.extractors.code_extractor import CodeExtractor
-
-    if zip_path:
-        return CodeExtractor().extract_from_zip(
-            zip_path, file_mappings=file_mappings, dependency_file=dependency_file
-        )
-    if code_dir:
-        return CodeExtractor().extract_from_directory(
-            code_dir, file_mappings=file_mappings, dependency_file=dependency_file
-        )
-    return []
-
-
-async def _analyze_screenshots(context, form_name: str, minio_bucket: str | None):
-    """Analyze screenshots from Minio."""
-    from src.agents.screenshot_analysis_agent import ScreenshotAnalysisAgent
-    from src.extractors.minio_extractor import MinioExtractor
-
-    screenshots = MinioExtractor().get_form_screenshots(form_name, bucket=minio_bucket)
-    if not screenshots:
-        return None
-    return await ScreenshotAnalysisAgent().analyze(context, screenshots=screenshots)
-
-
-async def _analyze_jira(context, form_name: str, jira_project: str | None):
-    """Analyze Jira issues with error handling."""
-    from src.agents.atlassian_integration_agent import AtlassianIntegrationAgent
-    from src.extractors.jira_extractor import JiraExtractor
-
-    try:
-        issues = JiraExtractor().get_form_issues(form_name, project_key=jira_project)
-        if not issues:
-            return None
-        return await AtlassianIntegrationAgent().analyze(context, issues=issues)
-    except Exception as e:
-        console.print(f"  [yellow]Jira skipped:[/yellow] {str(e)}")
-        return None
-
-
-def _setup_vector_store(form_name: str, code_files: list, recreate_vectors: bool):
-    """Phase 1: Setup vector store and add code documents."""
-    from src.extractors.code_extractor import CodeExtractor
-
-    qdrant = QdrantManager()
-    qdrant.create_collection(form_name, recreate=recreate_vectors)
-
-    if code_files:
-        documents = CodeExtractor().to_documents(code_files, form_name)
-        qdrant.add_documents(form_name, documents)
-
-    return qdrant
-
-
-async def _run_analysis_agents(
-    context,
-    form_name: str,
-    code_files: list,
-    minio_bucket: str | None,
-    jira_project: str | None,
-    skip_screenshots: bool,
-    skip_jira: bool,
-    progress: Progress,
-    task: TaskID,
-):
-    """Phase 2: Run all analysis agents."""
-    from src.agents.requirements_generator_agent import RequirementsGeneratorAgent
-    from src.agents.user_flow_agent import UserFlowAgent
-
-    screenshot_result = None
-    if not skip_screenshots:
-        progress.update(task, description="Analyzing screenshots...")
-        screenshot_result = await _analyze_screenshots(context, form_name, minio_bucket)
-
-    jira_result = None
-    if not skip_jira:
-        progress.update(task, description="Analyzing Jira issues...")
-        jira_result = await _analyze_jira(context, form_name, jira_project)
-
-    progress.update(task, description="Generating requirements...")
-    req_result = await RequirementsGeneratorAgent().analyze(context, code_files=code_files)
-
-    progress.update(task, description="Analyzing user flows...")
-    flow_result = await UserFlowAgent().analyze(context)
-
-    return screenshot_result, jira_result, req_result, flow_result
-
-
-async def _aggregate_and_save_prd(
-    context,
-    screenshot_result,
-    jira_result,
-    req_result,
-    flow_result,
-    form_name: str,
-    output_dir: str,
-    progress: Progress,
-    task: TaskID,
-):
-    """Phase 3: Aggregate PRD and save to file."""
-    from src.agents.prd_aggregator_agent import PRDAggregatorAgent
-    from src.utils.file_utils import ensure_directory
-
-    progress.update(task, description="Generating PRD document...")
-    prd_result = await PRDAggregatorAgent().analyze(
-        context,
-        screenshot_analysis=_get_successful_data(screenshot_result),
-        atlassian_analysis=_get_successful_data(jira_result),
-        requirements_analysis=_get_successful_data(req_result),
-        user_flow_analysis=_get_successful_data(flow_result),
-    )
-
-    if not (prd_result.success and prd_result.data):
-        console.print(f"\n[red]✗[/red] PRD generation failed: {prd_result.error}")
-        return None
-
-    output_path = ensure_directory(output_dir)
-    prd_file = output_path / f"{form_name}_PRD.md"
-    prd_file.write_text(prd_result.data.markdown_content, encoding="utf-8")
-
-    console.print("\n[green]✓[/green] PRD generated successfully!")
-    console.print(f"  [blue]File:[/blue] {prd_file}")
-    console.print(f"  [blue]Word count:[/blue] {prd_result.data.word_count}")
-    return prd_file
-
-
-async def _run_direct_generation(
-    form_name: str,
-    zip_path: str | None,
-    code_dir: str | None,
-    file_mappings: list[str] | None,
-    dependency_file: str | None,
-    minio_bucket: str | None,
-    jira_project: str | None,
-    output_dir: str,
-    skip_screenshots: bool,
-    skip_jira: bool,
-    recreate_vectors: bool,
-):
-    """Run PRD generation directly without Temporal."""
-    from src.agents.base_agent import AgentContext
-
-    context = AgentContext(form_name=form_name)
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Extracting code...", total=None)
-
-        code_files = _extract_code_files(zip_path, code_dir, file_mappings, dependency_file)
-        console.print(f"  Extracted {len(code_files)} code files")
-
-        progress.update(task, description="Creating vector collection...")
-        _setup_vector_store(form_name, code_files, recreate_vectors)
-
-        results = await _run_analysis_agents(
-            context,
-            form_name,
-            code_files,
-            minio_bucket,
-            jira_project,
-            skip_screenshots,
-            skip_jira,
-            progress,
-            task,
-        )
-        screenshot_result, jira_result, req_result, flow_result = results
-
-        await _aggregate_and_save_prd(
-            context,
-            screenshot_result,
-            jira_result,
-            req_result,
-            flow_result,
-            form_name,
-            output_dir,
-            progress,
-            task,
-        )
 
 
 @app.command()
@@ -498,12 +244,25 @@ def stats(
 def delete_collection(
     form_name: str = typer.Option(..., "--form-name", "-f", help="Form name to delete"),
     confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    delete_minio: bool = typer.Option(
+        True, "--delete-minio/--no-delete-minio", help="Also delete MinIO form data"
+    ),
+    bucket: str = typer.Option(
+        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
+    ),
 ):
-    """Delete a vector collection."""
+    """
+    Delete a vector collection and optionally MinIO form data.
+
+    Deletes:
+    - Qdrant vector collection for the form
+    - MinIO form data (FORMS/{FORM_NAME}/*) if --delete-minio is set
+    """
     if not confirm:
-        confirm = typer.confirm(
-            f"Are you sure you want to delete the collection for '{form_name}'?"
-        )
+        confirm_msg = f"Are you sure you want to delete the collection for '{form_name}'?"
+        if delete_minio:
+            confirm_msg += "\nThis will also delete all MinIO data for this form."
+        confirm = typer.confirm(confirm_msg)
         if not confirm:
             console.print("[yellow]Cancelled.[/yellow]")
             return
@@ -516,6 +275,33 @@ def delete_collection(
     else:
         console.print("[red]✗[/red] Failed to delete collection.")
 
+    # Delete MinIO form data if requested
+    if delete_minio:
+        from src.utils.minio_sync import MinioSync
+
+        try:
+            sync = MinioSync(bucket=bucket)
+            result = sync.delete_form_data(form_name, bucket=bucket)
+
+            if result.get("success"):
+                deleted_count = result.get("deleted_count", 0)
+                if deleted_count > 0:
+                    console.print(
+                        f"[green]✓[/green] MinIO data for '{form_name}' deleted ({deleted_count} objects)."
+                    )
+                else:
+                    console.print(
+                        f"[yellow]⚠[/yellow] No MinIO data found for form '{form_name}' in FORMS/{form_name.upper()}/"
+                    )
+                    console.print(
+                        f"[dim]Note: If you want to delete the entire bucket, use 'prd-agent delete-bucket'[/dim]"
+                    )
+            else:
+                error = result.get("error", "Unknown error")
+                console.print(f"[yellow]⚠[/yellow] MinIO deletion warning: {error}")
+        except Exception as e:
+            console.print(f"[yellow]⚠[/yellow] Failed to delete MinIO data: {str(e)}")
+
 
 @app.command()
 def migrate_code(
@@ -524,12 +310,6 @@ def migrate_code(
     ),
     output_dir: str = typer.Option(
         "./output/migratedCode", "--output", "-o", help="Output directory for zip files"
-    ),
-    db_doc_path: str = typer.Option(
-        None, "--db-doc", help="Path to database documentation (defaults to src/db_doc/Database_DOC.md)"
-    ),
-    skip_db_analysis: bool = typer.Option(
-        False, "--skip-db-analysis", help="Skip database analysis step"
     ),
 ):
     """
@@ -576,18 +356,17 @@ def migrate_code(
             progress.update(task1, description="Code migration complete!")
 
             # Step 2: Database Analysis
-            if not skip_db_analysis:
-                task2 = progress.add_task("Analyzing database mappings...", total=None)
-                db_result = await db_agent.analyze(context, db_doc_path=db_doc_path)
+            task2 = progress.add_task("Analyzing database mappings...", total=None)
+            db_result = await db_agent.analyze(context, db_doc_path=None)
 
-                if db_result.success and db_result.data:
-                    progress.update(task2, description="Database analysis complete!")
-                    console.print("\n[green]✓ Database analysis successful![/green]")
-                else:
-                    progress.update(task2, description="Database analysis failed!")
-                    console.print(
-                        f"\n[yellow]⚠ Database analysis failed:[/yellow] {db_result.error}"
-                    )
+            if db_result.success and db_result.data:
+                progress.update(task2, description="Database analysis complete!")
+                console.print("\n[green]✓ Database analysis successful![/green]")
+            else:
+                progress.update(task2, description="Database analysis failed!")
+                console.print(
+                    f"\n[yellow]⚠ Database analysis failed:[/yellow] {db_result.error}"
+                )
 
             # Display results
             console.print("\n[green]✓ Migration successful![/green]\n")
@@ -603,7 +382,7 @@ def migrate_code(
             table.add_row("Frontend Zip", migration_result.data.frontend_zip_path)
             table.add_row("Execution Time", f"{migration_result.execution_time_ms:.2f}ms")
 
-            if not skip_db_analysis and db_result.success and db_result.data:
+            if db_result.success and db_result.data:
                 table.add_row("", "")  # Separator
                 table.add_row("Database Tables Analyzed", str(db_result.data.tables_analyzed))
                 table.add_row("Relationships Mapped", str(db_result.data.relationships_mapped))
@@ -612,6 +391,176 @@ def migrate_code(
             console.print(table)
 
     asyncio.run(run_migration())
+
+
+@app.command()
+def create_minio_folders(
+    bucket: str = typer.Option(
+        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
+    ),
+):
+    """
+    Create empty folder structure in MinIO bucket.
+
+    Creates:
+    - FORMS/ (parent folder for all forms)
+    - DB_PRD/
+    - EXPORT_CODEBASE_PRD/
+    - LEGACY_CODEBASE/
+
+    Files can then be uploaded via MinIO UI.
+
+    Example:
+        prd-agent create-minio-folders
+    """
+    from src.utils.minio_sync import MinioSync
+
+    console.print(
+        Panel.fit(
+            "[bold blue]MinIO Folder Creation[/bold blue] - Creating folder structure in MinIO",
+            border_style="blue",
+        )
+    )
+
+    try:
+        sync = MinioSync(bucket=bucket)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Creating folders in MinIO...", total=None)
+
+            results = sync.create_folder_structure(bucket=bucket)
+
+            progress.update(task, description="Folder creation complete!")
+
+            table = Table(title="Folder Creation Results")
+            table.add_column("Folder", style="cyan")
+            table.add_column("Status", style="green")
+
+            for folder, created in results.items():
+                status = "[green]✓ Created[/green]" if created else "[red]✗ Failed[/red]"
+                table.add_row(folder, status)
+
+            console.print("\n[green]✓ Folder structure created![/green]\n")
+            console.print(table)
+            console.print("\n[yellow]Note:[/yellow] You can now upload files via MinIO UI")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Folder creation failed:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def create_form_folders(
+    form_name: str = typer.Argument(..., help="Form name (e.g., LE11, le07)"),
+    bucket: str = typer.Option(
+        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
+    ),
+):
+    """
+    Create folder structure for a specific form in MinIO.
+
+    Creates:
+    - FORMS/{FORM_NAME}/FORM_DOCS/
+    - FORMS/{FORM_NAME}/FORM_FILE_DEPENDENCIES/
+    - FORMS/{FORM_NAME}/UI_SCREENSHOTS/
+
+    Files can then be uploaded via MinIO UI.
+
+    Example:
+        prd-agent create-form-folders LE11
+    """
+    from src.utils.minio_sync import MinioSync
+
+    console.print(
+        Panel.fit(
+            f"[bold blue]Form Folder Creation[/bold blue] - Creating folders for {form_name.upper()}",
+            border_style="blue",
+        )
+    )
+
+    try:
+        sync = MinioSync(bucket=bucket)
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task(f"Creating folders for {form_name.upper()}...", total=None)
+
+            results = sync.create_form_folders(form_name, bucket=bucket)
+
+            progress.update(task, description="Folder creation complete!")
+
+            table = Table(title=f"Folder Creation Results for {form_name.upper()}")
+            table.add_column("Folder", style="cyan")
+            table.add_column("Status", style="green")
+
+            for folder, created in results.items():
+                status = "[green]✓ Created[/green]" if created else "[red]✗ Failed[/red]"
+                table.add_row(folder, status)
+
+            console.print(f"\n[green]✓ Folders created for {form_name.upper()}![/green]\n")
+            console.print(table)
+            console.print("\n[yellow]Note:[/yellow] You can now upload files via MinIO UI")
+
+    except Exception as e:
+        console.print(f"\n[red]✗ Folder creation failed:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def delete_bucket(
+    bucket: str = typer.Option(
+        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
+    ),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    force: bool = typer.Option(
+        True, "--force/--no-force", help="Delete all objects in bucket before deleting bucket"
+    ),
+):
+    """
+    Delete an entire MinIO bucket.
+
+    WARNING: This will delete ALL data in the bucket, including data for all forms!
+
+    Example:
+        prd-agent delete-bucket --bucket metadatas --yes
+    """
+    from src.utils.minio_sync import MinioSync
+
+    from src.config.settings import get_settings
+
+    bucket_name = bucket or get_settings().minio.bucket
+
+    if not confirm:
+        confirm_msg = (
+            f"[red]WARNING:[/red] This will delete the entire bucket '{bucket_name}' "
+            f"and ALL its contents (data for all forms)!\n"
+            f"Are you sure you want to continue?"
+        )
+        if not typer.confirm(confirm_msg):
+            console.print("[yellow]Cancelled.[/yellow]")
+            return
+
+    try:
+        sync = MinioSync(bucket=bucket)
+        result = sync.delete_bucket(bucket=bucket, force=force)
+
+        if result.get("success"):
+            console.print(f"[green]✓[/green] Bucket '{bucket_name}' deleted successfully.")
+        else:
+            error = result.get("error", "Unknown error")
+            console.print(f"[red]✗[/red] Failed to delete bucket: {error}")
+            raise typer.Exit(1)
+
+    except Exception as e:
+        console.print(f"[red]✗[/red] Failed to delete bucket: {str(e)}")
+        raise typer.Exit(1)
 
 
 @app.command()

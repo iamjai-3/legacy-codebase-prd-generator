@@ -43,7 +43,6 @@ class PRDGenerationConfig:
     form_name: str
     zip_path: str | None = None
     code_directory: str | None = None
-    file_mappings: list[str] | None = None
     minio_bucket: str | None = None
     minio_prefix: str | None = None
     jira_project_key: str | None = None
@@ -244,12 +243,12 @@ class PRDGenerator:
         if config.zip_path:
             return extractor.extract_from_zip(
                 config.zip_path,
-                file_mappings=config.file_mappings,
+                form_name=config.form_name,
             )
         elif config.code_directory:
             return extractor.extract_from_directory(
                 config.code_directory,
-                file_mappings=config.file_mappings,
+                form_name=config.form_name,
             )
         return []
     

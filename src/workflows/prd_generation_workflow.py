@@ -17,12 +17,11 @@ with workflow.unsafe.imports_passed_through():
     from src.workflows.activities import (
         aggregate_prd_activity,
         analyze_database_activity,
-        analyze_jira_activity,
         analyze_screenshots_activity,
         analyze_user_flows_activity,
+        ensure_minio_folders_activity,
         extract_code_activity,
         extract_existing_prd_activity,
-        extract_jira_activity,
         extract_screenshots_activity,
         generate_requirements_activity,
         save_prd_activity,
@@ -38,16 +37,11 @@ class PRDGenerationInput:
     form_name: str
     zip_path: str | None = None
     code_directory: str | None = None
-    file_mappings: list[str] | None = None
-    dependency_file: str | None = None
     minio_bucket: str | None = None
     minio_prefix: str | None = None
-    jira_project_key: str | None = None
-    jira_jql: str | None = None
     output_dir: str = "./output"
     recreate_vector_collection: bool = False
     skip_screenshots: bool = False
-    skip_jira: bool = False
     db_doc_path: str | None = None
     skip_database_analysis: bool = False
 
@@ -75,13 +69,12 @@ class PRDGenerationWorkflow:
     This workflow creates a combined knowledge base from:
     - Legacy code (for existing implementation details)
     - Screenshots (for UI context)
-    - Jira issues (for requirements context)
     - Existing PRD documents (for business logic and app flow)
 
     Workflow Steps:
-    1. Extract data from all sources (code, screenshots, Jira, existing PRDs)
+    1. Extract data from all sources (code, screenshots, existing PRDs) from MinIO
     2. Store all extracted data as vectors in unified knowledge base
-    3. Run analysis agents (screenshot, Jira) - parallel
+    3. Run analysis agents (screenshot) - parallel
     4. Generate requirements using knowledge base
     5. Analyze user flows using knowledge base
     6. Aggregate all insights into PRD
@@ -112,7 +105,6 @@ class PRDGenerationWorkflow:
     def _build_agent_results(
         self,
         screenshot: dict[str, Any],
-        jira: dict[str, Any],
         requirements: dict[str, Any],
         user_flow: dict[str, Any],
         existing_prd: dict[str, Any],
@@ -121,7 +113,6 @@ class PRDGenerationWorkflow:
         """Build agent results summary."""
         return {
             "screenshot_analysis": screenshot.get("success", False),
-            "jira_analysis": jira.get("success", False),
             "requirements_analysis": requirements.get("success", False),
             "user_flow_analysis": user_flow.get("success", False),
             "existing_prd_extraction": existing_prd.get("success", False),
@@ -156,6 +147,9 @@ class PRDGenerationWorkflow:
         """Execute the PRD generation workflow."""
         workflow.logger.info(f"Starting PRD generation for {input.form_name}")
 
+        # Ensure MinIO folder structure exists for this form (non-blocking)
+        await self._ensure_minio_folders(input)
+
         retry_policy = RetryPolicy(
             initial_interval=timedelta(seconds=1),
             maximum_interval=timedelta(minutes=5),
@@ -167,7 +161,7 @@ class PRDGenerationWorkflow:
         long_opts = {"start_to_close_timeout": timedelta(minutes=60), "retry_policy": retry_policy}
 
         try:
-            # Phase 1: Data Extraction (code, screenshots, Jira, existing PRDs)
+            # Phase 1: Data Extraction (code, screenshots, existing PRDs from MinIO)
             extraction = await self._extract_data(input, opts)
 
             # Phase 2: Vector Storage (creates unified knowledge base)
@@ -211,60 +205,77 @@ class PRDGenerationWorkflow:
             workflow.logger.error(f"Workflow failed: {str(e)}")
             return PRDGenerationOutput(form_name=input.form_name, success=False, error=str(e))
 
+    async def _ensure_minio_folders(self, input: PRDGenerationInput) -> None:
+        """Ensure MinIO folder structure exists for the form (verifies bucket exists first)."""
+        try:
+            # Verify bucket exists and create folders if missing (throws error if bucket missing)
+            result = await workflow.execute_activity(
+                ensure_minio_folders_activity,
+                args=[input.form_name, None],  # form_name, bucket (None = use default "metadatas")
+                start_to_close_timeout=timedelta(seconds=30),
+            )
+            if result.get("success"):
+                workflow.logger.info(
+                    f"MinIO folder structure ensured for {input.form_name}: {result.get('form_folders', {})}"
+                )
+            else:
+                # Bucket doesn't exist - this is critical, workflow should fail
+                error = result.get("error", "Unknown error")
+                workflow.logger.error(
+                    f"MinIO folder setup failed for {input.form_name}: {error}"
+                )
+                raise ValueError(f"MinIO setup failed: {error}")
+        except ValueError:
+            # Re-raise ValueError (bucket doesn't exist) to terminate workflow
+            raise
+        except Exception as e:
+            workflow.logger.error(
+                f"Could not ensure MinIO folders for {input.form_name}: {str(e)}"
+            )
+            raise  # Re-raise to fail workflow
+
     async def _extract_data(
         self, input: PRDGenerationInput, opts: dict[str, Any]
     ) -> dict[str, dict[str, Any]]:
         """Phase 1: Extract data from all sources including existing PRDs."""
         workflow.logger.info("Phase 1: Extracting data from all sources")
 
-        code_data = self._empty_result("code")
-        if input.zip_path or input.code_directory:
-            code_data = await workflow.execute_activity(
-                extract_code_activity,
-                args=[
-                    input.form_name,
-                    input.zip_path,
-                    input.code_directory,
-                    input.file_mappings,
-                    input.dependency_file,
-                ],
-                **opts,
-            )
+        # Code extraction - always run (will use MinIO if no local path provided)
+        code_data = await workflow.execute_activity(
+            extract_code_activity,
+            args=[
+                input.form_name,
+                input.zip_path,
+                input.code_directory,
+            ],
+            **opts,
+        )
 
         screenshot_data = self._empty_result("screenshots")
         if not input.skip_screenshots:
+            # Always use metadatas bucket (default), don't pass bucket parameter
             screenshot_data = await workflow.execute_activity(
                 extract_screenshots_activity,
-                args=[input.form_name, input.minio_bucket, input.minio_prefix],
+                args=[input.form_name, None, None],  # bucket=None uses default "metadatas"
                 **opts,
             )
 
-        jira_data = self._empty_result("jira")
-        if not input.skip_jira:
-            jira_data = await workflow.execute_activity(
-                extract_jira_activity,
-                args=[input.form_name, input.jira_project_key, input.jira_jql],
-                **opts,
-            )
-
-        # Extract existing PRD documents (business logic, app flow, requirements)
+        # Extract existing PRD documents from MinIO (business logic, app flow, requirements)
         existing_prd_data = await workflow.execute_activity(
             extract_existing_prd_activity,
-            args=[input.form_name, None],  # Uses default src/PRDs directory
+            args=[input.form_name],  # Only MinIO, no local fallback
             **opts,
         )
 
         workflow.logger.info(
             f"Extraction complete - Code: {code_data.get('file_count', 0)}, "
             f"Screenshots: {screenshot_data.get('screenshot_count', 0)}, "
-            f"Jira: {jira_data.get('issue_count', 0)}, "
             f"Existing PRD docs: {existing_prd_data.get('document_count', 0)}"
         )
 
         return {
             "code": code_data,
             "screenshots": screenshot_data,
-            "jira": jira_data,
             "existing_prd": existing_prd_data,
         }
 
@@ -283,7 +294,6 @@ class PRDGenerationWorkflow:
                 input.form_name,
                 extraction["code"],
                 extraction["screenshots"],
-                extraction["jira"],
                 extraction["existing_prd"],  # Include existing PRD documents
                 input.recreate_vector_collection,
                 extraction["code"].get(
@@ -316,24 +326,15 @@ class PRDGenerationWorkflow:
             }
 
         try:
-            # Determine form-specific source tables file path
-            # Look for src/PRDs/{FORM_NAME}/{FORM_NAME}_SourceTables.md
+            # Database analysis agent will handle MinIO/local lookup automatically
+            # Pass None to let it determine the path (MinIO first, then local)
             form_specific_path = None
             if not input.db_doc_path:
-                from pathlib import Path
-                form_name_upper = input.form_name.upper()
-                # Try src/PRDs/{FORM_NAME}/{FORM_NAME}_SourceTables.md
-                form_specific_path = (
-                    Path(__file__).parent.parent.parent
-                    / "PRDs"
-                    / form_name_upper
-                    / f"{form_name_upper}_SourceTables.md"
+                # Agent will try MinIO: FORMS/{FORM_NAME}/FORM_DOCS/{FORM_NAME}_SourceTables.md
+                # Then fallback to local: src/PRDs/{FORM_NAME}/FORM_DOCS/{FORM_NAME}_SourceTables.md
+                workflow.logger.info(
+                    f"Database analysis will auto-detect source tables file for {input.form_name}"
                 )
-                if not form_specific_path.exists():
-                    form_specific_path = None
-                    workflow.logger.warning(
-                        f"Form-specific source tables file not found for {input.form_name}"
-                    )
 
             result = await workflow.execute_activity(
                 analyze_database_activity,
@@ -367,7 +368,7 @@ class PRDGenerationWorkflow:
         extraction: dict[str, dict[str, Any]],
         opts: dict[str, Any],
     ) -> dict[str, dict[str, Any]]:
-        """Phase 3: Run screenshot and Jira analysis."""
+        """Phase 3: Run screenshot analysis."""
         workflow.logger.info("Phase 3: Running initial analysis agents")
 
         screenshot_analysis = self._empty_result("screenshot_analysis")
@@ -378,15 +379,7 @@ class PRDGenerationWorkflow:
                 **opts,
             )
 
-        jira_analysis = self._empty_result("jira_analysis")
-        if not input.skip_jira and extraction["jira"].get("issue_count", 0) > 0:
-            jira_analysis = await workflow.execute_activity(
-                analyze_jira_activity,
-                args=[input.form_name, extraction["jira"]],
-                **opts,
-            )
-
-        return {"screenshot": screenshot_analysis, "jira": jira_analysis}
+        return {"screenshot": screenshot_analysis}
 
     async def _generate_requirements(
         self,
@@ -398,12 +391,11 @@ class PRDGenerationWorkflow:
         """Phase 4: Generate requirements."""
         workflow.logger.info("Phase 4: Generating requirements")
 
-        jira_context = self._get_if_success(analysis["jira"], "summary")
         screenshot_context = self._get_if_success(analysis["screenshot"], "ui_flow_summary")
 
         return await workflow.execute_activity(
             generate_requirements_activity,
-            args=[input.form_name, extraction["code"], jira_context, screenshot_context],
+            args=[input.form_name, extraction["code"], None, screenshot_context],  # No Jira context
             **opts,
         )
 
@@ -473,7 +465,6 @@ class PRDGenerationWorkflow:
             args=[
                 input.form_name,
                 self._result_if_success(analysis["screenshot"]),
-                self._result_if_success(analysis["jira"]),
                 self._result_if_success(requirements),
                 self._result_if_success(user_flow),
                 self._result_if_success(database_analysis),
@@ -500,7 +491,6 @@ class PRDGenerationWorkflow:
 
         agent_results = self._build_agent_results(
             analysis["screenshot"],
-            analysis["jira"],
             requirements,
             user_flow,
             extraction["existing_prd"],

@@ -1,16 +1,20 @@
 """
-PRD Extractor for processing existing PRD documentation.
+PRD Extractor for processing existing PRD documentation from MinIO only.
 
-Extracts markdown documents and images from the src/PRDs/{form_name}/ folder
+Extracts markdown documents and images from:
+- MinIO bucket: FORMS/{form_name}/FORM_DOCS/ and FORMS/{form_name}/UI_SCREENSHOTS/
+
 to build a comprehensive knowledge base for migration.
 """
 
 import base64
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from src.config.settings import get_settings
 from src.utils.logging_config import get_logger
+from src.utils.minio_sync import MinioSync
 
 logger = get_logger(__name__)
 
@@ -28,6 +32,10 @@ class PRDDocument:
     section_count: int = 0
 
 
+# Default content type constant
+DEFAULT_IMAGE_CONTENT_TYPE = "image/png"
+
+
 @dataclass
 class PRDImage:
     """Represents a PRD image/screenshot."""
@@ -36,7 +44,7 @@ class PRDImage:
     filename: str
     image_data: bytes | None = None
     base64_data: str = ""
-    content_type: str = "image/png"
+    content_type: str = DEFAULT_IMAGE_CONTENT_TYPE
     description: str = ""  # Derived from filename
     size: int = 0
 
@@ -67,56 +75,36 @@ class PRDExtractor:
     IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
     MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 
-    def __init__(self, prd_base_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        use_minio: bool = True,
+        minio_bucket: str | None = None,
+    ) -> None:
         """
-        Initialize the PRD extractor.
+        Initialize the PRD extractor (MinIO only).
 
         Args:
-            prd_base_dir: Base directory for PRDs. Defaults to src/PRDs
+            use_minio: Whether to read from MinIO bucket (default: True, required)
+            minio_bucket: MinIO bucket name (defaults to configured bucket: metadatas)
         """
         self.settings = get_settings()
+        self.use_minio = use_minio
+        self.minio_bucket = minio_bucket or self.settings.minio.bucket
+        self._minio_sync: MinioSync | None = None
 
-        if prd_base_dir:
-            self.prd_base_dir = Path(prd_base_dir)
-        else:
-            # Default to src/PRDs relative to project root
-            self.prd_base_dir = Path(__file__).parent.parent / "PRDs"
+    @property
+    def minio_sync(self) -> MinioSync:
+        """Get or create MinIO sync instance."""
+        if self._minio_sync is None:
+            self._minio_sync = MinioSync(bucket=self.minio_bucket)
+        return self._minio_sync
 
-    def get_form_prd_directory(self, form_name: str) -> Path | None:
-        """
-        Get the PRD directory for a specific form.
-
-        Args:
-            form_name: Form identifier (e.g., "le11", "LE11", "leo7")
-
-        Returns:
-            Path to PRD directory if exists, None otherwise
-        """
-        # Normalize form name: handle typos like "leo7" -> "le07"
-        normalized = form_name.lower().replace("leo", "le0") if "leo" in form_name.lower() else form_name
-        
-        # Try different case variations, prioritizing uppercase (standard format)
-        variations = [
-            normalized.upper(),  # LE07, LE11 (standard format)
-            normalized.lower(),  # le07, le11
-            normalized.capitalize(),  # Le07, Le11
-            normalized,  # Original
-            form_name.upper(),  # Also try original in uppercase
-            form_name.lower(),  # Also try original in lowercase
-        ]
-
-        for variant in variations:
-            prd_dir = self.prd_base_dir / variant
-            if prd_dir.exists() and prd_dir.is_dir():
-                logger.info(f"Found PRD directory: {prd_dir} (searched for: {form_name})")
-                return prd_dir
-
-        logger.warning(f"No PRD directory found for form: {form_name} (tried variations: {variations})")
-        return None
 
     def extract_existing_prd(self, form_name: str) -> ExistingPRD | None:
         """
-        Extract all PRD documentation for a form.
+        Extract all PRD documentation for a form from MinIO only.
+
+        Looks in: FORMS/{form_name}/FORM_DOCS/ and FORMS/{form_name}/UI_SCREENSHOTS/
 
         Args:
             form_name: Form identifier
@@ -124,50 +112,48 @@ class PRDExtractor:
         Returns:
             ExistingPRD object with all documents and images, or None if not found
         """
-        prd_dir = self.get_form_prd_directory(form_name)
-
-        if not prd_dir:
-            logger.info(f"No existing PRD found for {form_name}")
+        # Only use MinIO, no local fallback
+        try:
+            existing_prd = self._extract_from_minio(form_name)
+            if existing_prd:
+                return existing_prd
+        except Exception as e:
+            logger.error(f"Failed to extract from MinIO: {e}", form_name=form_name, bucket=self.minio_bucket)
             return None
 
-        logger.info(f"Extracting existing PRD from: {prd_dir}")
+        logger.info(f"No existing PRD found in MinIO for {form_name}", bucket=self.minio_bucket)
+        return None
 
-        documents = self._extract_documents(prd_dir, form_name)
-        images = self._extract_images(prd_dir, form_name)
+    def _extract_from_minio(self, form_name: str) -> ExistingPRD | None:
+        """Extract PRD from MinIO bucket using FORMS/{form_name}/ structure."""
+        form_name_upper = form_name.upper()
+        prefix = f"FORMS/{form_name_upper}/"
 
-        # Combine all markdown content for knowledge base
-        combined_content = self._combine_documents(documents)
+        logger.info("Extracting PRD from MinIO", form_name=form_name, prefix=prefix)
 
-        existing_prd = ExistingPRD(
-            form_name=form_name,
-            prd_directory=str(prd_dir),
-            documents=documents,
-            images=images,
-            total_documents=len(documents),
-            total_images=len(images),
-            combined_content=combined_content,
-        )
+        # List all objects for this form
+        objects = self.minio_sync.list_objects(prefix=prefix, bucket=self.minio_bucket)
 
-        logger.info(
-            f"Extracted PRD for {form_name}: " f"{len(documents)} documents, {len(images)} images"
-        )
+        if not objects:
+            logger.info(f"No objects found in MinIO for {form_name}")
+            return None
 
-        return existing_prd
+        documents: list[PRDDocument] = []
+        images: list[PRDImage] = []
 
-    def _extract_documents(self, prd_dir: Path, form_name: str) -> list[PRDDocument]:
-        """Extract all markdown documents from the PRD directory."""
-        documents = []
-
-        for file_path in prd_dir.iterdir():
-            if file_path.suffix.lower() in self.MARKDOWN_EXTENSIONS:
+        # Extract documents from FORM_DOCS/
+        form_docs_prefix = f"{prefix}FORM_DOCS/"
+        for obj_name in objects:
+            if obj_name.startswith(form_docs_prefix) and obj_name.endswith((".md", ".markdown")):
                 try:
-                    content = file_path.read_text(encoding="utf-8")
-                    doc_type = self._determine_document_type(file_path.name, form_name)
+                    content = self.minio_sync.get_file_text(obj_name, bucket=self.minio_bucket)
+                    filename = Path(obj_name).name
+                    doc_type = self._determine_document_type(filename, form_name)
                     title = self._extract_title(content)
 
                     document = PRDDocument(
-                        path=str(file_path),
-                        filename=file_path.name,
+                        path=obj_name,
+                        filename=filename,
                         content=content,
                         document_type=doc_type,
                         title=title,
@@ -175,13 +161,41 @@ class PRDExtractor:
                         section_count=content.count("## ") + content.count("# "),
                     )
                     documents.append(document)
-
-                    logger.debug(f"Extracted document: {file_path.name} ({doc_type})")
-
+                    logger.debug("Extracted document from MinIO", filename=filename, doc_type=doc_type)
                 except Exception as e:
-                    logger.warning(f"Failed to read document {file_path}: {e}")
+                    logger.warning(f"Failed to read document {obj_name} from MinIO: {e}")
 
-        # Sort by document type importance
+        # Extract images from UI_SCREENSHOTS/
+        screenshots_prefix = f"{prefix}UI_SCREENSHOTS/"
+        for obj_name in objects:
+            if obj_name.startswith(screenshots_prefix):
+                ext = Path(obj_name).suffix.lower()
+                if ext in self.IMAGE_EXTENSIONS:
+                    try:
+                        image_data = self.minio_sync.get_file_content(obj_name, bucket=self.minio_bucket)
+                        base64_data = base64.b64encode(image_data).decode("utf-8")
+                        filename = Path(obj_name).name
+                        description = self._filename_to_description(Path(obj_name).stem)
+                        content_type = self._get_content_type(ext)
+
+                        image = PRDImage(
+                            path=obj_name,
+                            filename=filename,
+                            image_data=image_data,
+                            base64_data=base64_data,
+                            content_type=content_type,
+                            description=description,
+                            size=len(image_data),
+                        )
+                        images.append(image)
+                        logger.debug(f"Extracted image from MinIO: {filename}")
+                    except Exception as e:
+                        logger.warning(f"Failed to read image {obj_name} from MinIO: {e}")
+
+        if not documents and not images:
+            return None
+
+        # Sort documents by type importance
         type_order = ["description", "requirements", "sourcetables", "prompt"]
         documents.sort(
             key=lambda d: (
@@ -191,41 +205,25 @@ class PRDExtractor:
             )
         )
 
-        return documents
+        combined_content = self._combine_documents(documents)
 
-    def _extract_images(self, prd_dir: Path, form_name: str) -> list[PRDImage]:
-        """Extract all images from the PRD directory."""
-        images = []
+        existing_prd = ExistingPRD(
+            form_name=form_name,
+            prd_directory=f"MinIO:{self.minio_bucket}/{prefix}",
+            documents=documents,
+            images=images,
+            total_documents=len(documents),
+            total_images=len(images),
+            combined_content=combined_content,
+        )
 
-        for file_path in prd_dir.iterdir():
-            if file_path.suffix.lower() in self.IMAGE_EXTENSIONS:
-                try:
-                    image_data = file_path.read_bytes()
-                    base64_data = base64.b64encode(image_data).decode("utf-8")
+        logger.info(
+            f"Extracted PRD from MinIO for {form_name}: "
+            f"{len(documents)} documents, {len(images)} images"
+        )
 
-                    # Derive description from filename
-                    description = self._filename_to_description(file_path.stem)
+        return existing_prd
 
-                    # Determine content type
-                    content_type = self._get_content_type(file_path.suffix)
-
-                    image = PRDImage(
-                        path=str(file_path),
-                        filename=file_path.name,
-                        image_data=image_data,
-                        base64_data=base64_data,
-                        content_type=content_type,
-                        description=description,
-                        size=len(image_data),
-                    )
-                    images.append(image)
-
-                    logger.debug(f"Extracted image: {file_path.name}")
-
-                except Exception as e:
-                    logger.warning(f"Failed to read image {file_path}: {e}")
-
-        return images
 
     def _determine_document_type(self, filename: str, form_name: str) -> str:
         """Determine the document type from filename."""
@@ -271,7 +269,7 @@ class PRDExtractor:
             ".webp": "image/webp",
             ".bmp": "image/bmp",
         }
-        return content_types.get(suffix.lower(), "image/png")
+        return content_types.get(suffix.lower(), DEFAULT_IMAGE_CONTENT_TYPE)
 
     def _combine_documents(self, documents: list[PRDDocument]) -> str:
         """Combine all document content into a single string for embedding."""
@@ -287,11 +285,3 @@ class PRDExtractor:
 
         return "\n".join(combined_parts)
 
-    def list_available_prds(self) -> list[str]:
-        """List all available PRD form names."""
-        if not self.prd_base_dir.exists():
-            return []
-
-        return [
-            d.name for d in self.prd_base_dir.iterdir() if d.is_dir() and not d.name.startswith(".")
-        ]

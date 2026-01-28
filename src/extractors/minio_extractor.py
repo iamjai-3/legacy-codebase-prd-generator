@@ -79,27 +79,28 @@ class MinioExtractor:
         screenshots: list[Screenshot] = []
 
         try:
-            # Ensure bucket exists
+            # Verify bucket exists (required - don't create)
             if not self.client.bucket_exists(bucket):
-                logger.warning("Bucket does not exist", bucket=bucket)
-                return screenshots
+                error_msg = f"Bucket '{bucket}' does not exist. Please create the 'metadatas' bucket in MinIO first."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
 
             # Determine search strategy:
-            # 1. If prefix is explicitly provided, use it
-            # 2. If bucket name matches form_name, search all images in bucket
-            # 3. Otherwise, try form_name/ prefix first, then fallback to all images
+            # Use FORMS/{FORM_NAME}/UI_SCREENSHOTS/ structure within the metadatas bucket
+            form_name_upper = form_name.upper()
+            form_screenshots_prefix = f"FORMS/{form_name_upper}/UI_SCREENSHOTS/"
+
             search_prefixes: list[str | None] = []
 
             if prefix is not None:
                 # Explicit prefix provided
                 search_prefixes = [prefix]
-            elif bucket.lower() == form_name.lower():
-                # Bucket name IS the form name - search all images directly in bucket
-                search_prefixes = [None]
-                logger.info("Bucket name matches form name, searching all images in bucket")
             else:
-                # Try form_name/ prefix first, then fallback to all images
-                search_prefixes = [f"{form_name}/", None]
+                # Use standard structure: FORMS/{FORM_NAME}/UI_SCREENSHOTS/
+                search_prefixes = [form_screenshots_prefix]
+                logger.info(
+                    "Searching screenshots in MinIO", bucket=bucket, prefix=form_screenshots_prefix
+                )
 
             all_objects: list[Any] = []
 

@@ -6,7 +6,6 @@ from typing import Any
 from temporalio import activity
 
 from src.extractors.code_extractor import CodeExtractor
-from src.extractors.jira_extractor import JiraExtractor
 from src.extractors.minio_extractor import MinioExtractor
 from src.extractors.prd_extractor import PRDExtractor
 from src.utils.logging_config import get_logger
@@ -20,8 +19,6 @@ async def extract_code_activity(
     form_name: str,
     zip_path: str | None = None,
     code_directory: str | None = None,
-    file_mappings: list[str] | None = None,
-    dependency_file: str | None = None,
 ) -> dict[str, Any]:
     """Extract and analyze code from a ZIP file or directory.
 
@@ -33,11 +30,51 @@ async def extract_code_activity(
         form_name=form_name,
         zip_path=zip_path,
         directory=code_directory,
-        dependency_file=dependency_file,
     )
 
     extractor = CodeExtractor()
     extract_dir = None
+    temp_zip_path: str | None = None
+
+    # If no local path provided, try to load from MinIO LEGACY_CODEBASE/
+    if not zip_path and not code_directory:
+        from src.utils.minio_sync import MinioSync
+
+        # Use default bucket (metadatas) for all MinIO operations
+        minio_sync = MinioSync(bucket=None)  # None = use default from settings (metadatas)
+        logger.info("Using MinIO bucket for legacy codebase", bucket=minio_sync.bucket)
+        
+        # Look for ZIP files in LEGACY_CODEBASE/ within the metadatas bucket
+        legacy_objects = minio_sync.list_objects(prefix="LEGACY_CODEBASE/", bucket=None)
+        logger.info("Checking MinIO for legacy codebase", bucket=minio_sync.bucket, prefix="LEGACY_CODEBASE/", objects_found=len(legacy_objects))
+        
+        zip_files = [obj for obj in legacy_objects if obj.lower().endswith('.zip')]
+        
+        if zip_files:
+            # Use the first ZIP file found (or could be smarter about selection)
+            zip_object_name = zip_files[0]
+            logger.info("Loading legacy codebase from MinIO", object_name=zip_object_name, total_zips=len(zip_files))
+            
+            # Download ZIP to temporary location
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip', delete_on_close=False) as tmp_file:
+                zip_data = minio_sync.get_file_content(zip_object_name, bucket=None)  # Uses default metadatas bucket
+                tmp_file.write(zip_data)
+                zip_path = tmp_file.name
+                temp_zip_path = zip_path  # Track for cleanup
+                logger.info("Downloaded ZIP from MinIO to temporary file", path=zip_path, size=len(zip_data))
+        else:
+            logger.warning(
+                "No ZIP file found in MinIO LEGACY_CODEBASE/",
+                total_objects=len(legacy_objects),
+                objects=legacy_objects[:10] if legacy_objects else []
+            )
+            return {
+                "success": True,
+                "files_count": 0,
+                "files": [],
+                "extract_dir": None,
+            }
 
     if zip_path:
         # Determine extract directory (CodeExtractor uses uploads_dir by default)
@@ -47,16 +84,25 @@ async def extract_code_activity(
         zip_path_obj = Path(zip_path)
         extract_dir = Path(settings.uploads_dir) / zip_path_obj.stem
 
+        logger.info("Extracting code from ZIP", zip_path=zip_path, form_name=form_name, extract_dir=str(extract_dir))
         code_files = extractor.extract_from_zip(
-            zip_path=zip_path, file_mappings=file_mappings, dependency_file=dependency_file
+            zip_path=zip_path, form_name=form_name
         )
+        logger.info("Code extraction complete", files_extracted=len(code_files))
     elif code_directory:
         extract_dir = Path(code_directory)
         code_files = extractor.extract_from_directory(
-            directory=code_directory, file_mappings=file_mappings, dependency_file=dependency_file
+            directory=code_directory, form_name=form_name
         )
     else:
-        raise ValueError("Either zip_path or code_directory must be provided")
+        # No code source available
+        logger.warning("No code source provided and none found in MinIO")
+        return {
+            "success": True,
+            "files_count": 0,
+            "files": [],
+            "extract_dir": None,
+        }
 
     # Limit metadata to avoid exceeding gRPC message size limits
     # Store only essential information, full content will be in vector store
@@ -102,7 +148,7 @@ async def extract_code_activity(
         )
         total_size += file_meta_size
 
-    return {
+    result = {
         "form_name": form_name,
         "file_count": len(code_files),
         "files": files_metadata,
@@ -113,6 +159,17 @@ async def extract_code_activity(
         # Full file content is stored in vector store via store_vectors_activity
         # This avoids exceeding Temporal gRPC message size limits (4MB default)
     }
+    
+    # Clean up temporary ZIP file if it was downloaded from MinIO
+    if temp_zip_path and Path(temp_zip_path).exists():
+        try:
+            import os
+            os.unlink(temp_zip_path)
+            logger.info("Cleaned up temporary ZIP file", path=temp_zip_path)
+        except Exception as e:
+            logger.warning("Failed to clean up temporary ZIP file", path=temp_zip_path, error=str(e))
+    
+    return result
 
 
 @activity.defn
@@ -144,66 +201,25 @@ async def extract_screenshots_activity(
 
 
 @activity.defn
-async def extract_jira_activity(
-    form_name: str,
-    project_key: str | None = None,
-    jql: str | None = None,
-) -> dict[str, Any]:
-    """Extract Jira issues for a form."""
-    logger.info("Starting Jira extraction", form_name=form_name, project_key=project_key)
-
-    extractor = JiraExtractor()
-
-    try:
-        issues = extractor.get_form_issues(
-            form_name=form_name, project_key=project_key, additional_jql=jql
-        )
-
-        return {
-            "form_name": form_name,
-            "issue_count": len(issues),
-            "issues": [
-                {
-                    "key": issue.key,
-                    "summary": issue.summary,
-                    "issue_type": issue.issue_type,
-                    "status": issue.status,
-                    "priority": issue.priority,
-                }
-                for issue in issues
-            ],
-            "raw_issues": issues,
-        }
-    except Exception as e:
-        logger.warning("Jira extraction failed", error=str(e))
-        return {
-            "form_name": form_name,
-            "issue_count": 0,
-            "issues": [],
-            "raw_issues": [],
-            "error": str(e),
-        }
-
-
-@activity.defn
 async def extract_existing_prd_activity(
     form_name: str,
-    prd_base_dir: str | None = None,
 ) -> dict[str, Any]:
     """
-    Extract existing PRD documentation from src/PRDs folder.
+    Extract existing PRD documentation from MinIO only.
 
-    This extracts markdown documents and images that contain:
-    - Business logic descriptions
-    - Requirements documentation
-    - Source table mappings
-    - UI screenshots with annotations
+    This extracts markdown documents and images from:
+    - FORMS/{form_name}/FORM_DOCS/ (markdown documents)
+    - FORMS/{form_name}/UI_SCREENSHOTS/ (images)
 
     These are combined into the knowledge base for migration purposes.
     """
-    logger.info("Starting existing PRD extraction", form_name=form_name, prd_base_dir=prd_base_dir)
+    logger.info(
+        "Starting existing PRD extraction from MinIO",
+        form_name=form_name,
+    )
 
-    extractor = PRDExtractor(prd_base_dir=prd_base_dir)
+    # Only use MinIO, no local fallback
+    extractor = PRDExtractor(use_minio=True)
     existing_prd = extractor.extract_existing_prd(form_name)
 
     if not existing_prd:

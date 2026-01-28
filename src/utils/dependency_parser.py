@@ -1,18 +1,21 @@
 """
-Utility to parse dependency files and extract file paths.
+Utility to parse dependency files and extract file paths from MinIO.
 """
 
 import re
 from pathlib import Path
 
 from src.utils.logging_config import get_logger
+from src.utils.minio_sync import MinioSync
 
 logger = get_logger(__name__)
 
 
-def parse_dependency_file(dependency_file: str | Path) -> list[str]:
+def parse_dependency_file(form_name: str, bucket: str | None = None) -> list[str]:
     """
-    Parse a dependency file and extract all file paths.
+    Parse a dependency file from MinIO and extract all file paths.
+
+    Looks for: FORMS/{FORM_NAME}/FORM_FILE_DEPENDENCIES/{FORM_NAME}_dependencies.txt
 
     The dependency file format can be:
     - Plain text with file paths (one per line or in sections)
@@ -20,18 +23,36 @@ def parse_dependency_file(dependency_file: str | Path) -> list[str]:
     - May contain comments or section headers
 
     Args:
-        dependency_file: Path to the dependency file
+        form_name: Form identifier (e.g., "le07", "LE11")
+        bucket: Optional MinIO bucket name (defaults to configured bucket)
 
     Returns:
         List of file paths extracted from the dependency file
     """
-    dependency_file = Path(dependency_file)
-
-    if not dependency_file.exists():
-        logger.warning("Dependency file not found", file=str(dependency_file))
+    form_name_lower = form_name.lower()
+    form_name_upper = form_name.upper()
+    
+    # Use default bucket (metadatas) if not specified
+    minio_sync = MinioSync(bucket=bucket)  # bucket=None uses default "metadatas" from settings
+    dependency_object_name = f"FORMS/{form_name_upper}/FORM_FILE_DEPENDENCIES/{form_name_lower}_dependencies.txt"
+    
+    logger.info("Loading dependencies from MinIO", form_name=form_name, bucket=minio_sync.bucket, object_name=dependency_object_name)
+    
+    try:
+        # bucket=None means use the MinioSync instance's bucket (defaults to "metadatas")
+        if not minio_sync.file_exists(dependency_object_name, bucket=None):
+            logger.warning("Dependency file not found in MinIO", form_name=form_name, object_name=dependency_object_name, bucket=minio_sync.bucket)
+            return []
+        
+        content = minio_sync.get_file_text(dependency_object_name, bucket=None)
+        logger.info("Loaded dependency file from MinIO", form_name=form_name, object_name=dependency_object_name)
+    except Exception as e:
+        logger.error("Failed to load dependency file from MinIO", form_name=form_name, error=str(e))
         return []
-
-    content = dependency_file.read_text(encoding="utf-8")
+    
+    if not content:
+        return []
+    
     paths: set[str] = set()
 
     # Pattern to match file paths (handles various formats)
@@ -128,7 +149,7 @@ def parse_dependency_file(dependency_file: str | Path) -> list[str]:
     paths_list = sorted(list(paths))
     logger.info(
         "Parsed dependency file",
-        file=str(dependency_file),
+        form_name=form_name,
         total_paths=len(paths_list),
     )
 

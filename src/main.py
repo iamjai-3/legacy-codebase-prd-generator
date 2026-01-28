@@ -24,7 +24,6 @@ async def generate_prd(
     form_name: str,
     zip_path: str | None = None,
     code_directory: str | None = None,
-    file_mappings: list[str] | None = None,
     minio_bucket: str | None = None,
     jira_project: str | None = None,
     output_dir: str = "./output",
@@ -39,7 +38,6 @@ async def generate_prd(
         form_name: Name of the form to analyze (e.g., 'le01')
         zip_path: Path to the code ZIP file
         code_directory: Path to the code directory
-        file_mappings: List of specific file paths to include
         minio_bucket: Minio bucket for screenshots
         jira_project: Jira project key
         output_dir: Output directory for PRD
@@ -56,7 +54,6 @@ async def generate_prd(
         form_name=form_name,
         zip_path=zip_path,
         code_directory=code_directory,
-        file_mappings=file_mappings,
         minio_bucket=minio_bucket,
         jira_project_key=jira_project,
         output_dir=output_dir,

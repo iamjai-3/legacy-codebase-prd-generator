@@ -1,11 +1,12 @@
 """Storage activities for PRD generation workflow."""
 
+from src.utils.minio_sync import MinioSync
+
 from datetime import datetime
 from typing import Any
 
 from temporalio import activity
 
-from src.extractors.jira_extractor import JiraExtractor
 from src.extractors.minio_extractor import MinioExtractor, Screenshot
 from src.utils.data_reconstruction import _restore_image_data
 from src.utils.file_utils import ensure_directory, write_json
@@ -20,7 +21,6 @@ async def store_vectors_activity(
     form_name: str,
     code_data: dict[str, Any] | None = None,
     screenshot_data: dict[str, Any] | None = None,
-    jira_data: dict[str, Any] | None = None,
     existing_prd_data: dict[str, Any] | None = None,
     recreate_collection: bool = False,
     extract_dir: str | None = None,
@@ -31,7 +31,6 @@ async def store_vectors_activity(
     This creates a unified knowledge base containing:
     - Legacy code (for understanding existing implementation)
     - Screenshots (for UI context)
-    - Jira issues (for requirements context)
     - Existing PRD documents (for business logic and app flow context)
 
     This combined knowledge base is used for migration purposes.
@@ -40,7 +39,6 @@ async def store_vectors_activity(
         form_name: Form identifier
         code_data: Code extraction metadata (files list with paths)
         screenshot_data: Screenshot data
-        jira_data: Jira issue data
         existing_prd_data: Existing PRD documents
         recreate_collection: Whether to recreate the collection
         extract_dir: Directory where files were extracted (to read actual content)
@@ -127,15 +125,6 @@ async def store_vectors_activity(
                     form_name=form_name, text=content, metadata=metadata, doc_type="screenshot"
                 )
                 total_vectors += count
-
-    # Store Jira vectors
-    if jira_data:
-        jira_extractor = JiraExtractor()
-        issues = jira_data.get("raw_issues", [])
-        if issues:
-            documents = jira_extractor.to_documents(issues, form_name)
-            count = qdrant.add_documents(form_name, documents)
-            total_vectors += count
 
     # Store existing PRD documents (business logic and app flow context)
     if existing_prd_data and existing_prd_data.get("success"):
@@ -533,3 +522,57 @@ async def save_prd_activity(
         "metadata_file": str(metadata_file),
         "word_count": metadata["word_count"],
     }
+
+
+@activity.defn
+async def ensure_minio_folders_activity(form_name: str, bucket: str | None = None) -> dict[str, Any]:
+    """
+    Ensure MinIO folder structure exists for a form (only creates if missing).
+
+    Verifies bucket exists (throws error if not), then ensures folders exist:
+    - FORMS/{FORM_NAME}/FORM_DOCS/
+    - FORMS/{FORM_NAME}/FORM_FILE_DEPENDENCIES/
+    - FORMS/{FORM_NAME}/UI_SCREENSHOTS/
+
+    Args:
+        form_name: Form identifier
+        bucket: Optional bucket name (defaults to "metadatas")
+
+    Returns:
+        Dictionary with creation status
+    """
+    from src.utils.minio_sync import MinioSync
+
+    try:
+        # Use default bucket (metadatas) if not specified
+        sync = MinioSync(bucket=bucket)  # bucket=None uses default "metadatas" from settings
+        logger.info("Ensuring MinIO folder structure", bucket=sync.bucket, form_name=form_name)
+        
+        # Verify bucket exists (throws error if not)
+        sync.ensure_bucket(bucket=None, must_exist=True)
+        
+        # Create base folder structure if needed (only creates if missing)
+        base_results = sync.create_folder_structure(bucket=None)  # Uses sync.bucket (metadatas)
+        # Create form-specific folders (only creates if missing)
+        form_results = sync.create_form_folders(form_name, bucket=None)  # Uses sync.bucket (metadatas)
+
+        logger.info(
+            "Ensured MinIO folder structure",
+            form_name=form_name,
+            base_folders=base_results,
+            form_folders=form_results,
+        )
+
+        return {
+            "success": True,
+            "form_name": form_name,
+            "base_folders": base_results,
+            "form_folders": form_results,
+        }
+    except ValueError as e:
+        # Bucket doesn't exist - this is a critical error
+        logger.error("Bucket does not exist - workflow terminated", bucket=sync.bucket if 'sync' in locals() else bucket, error=str(e))
+        raise  # Re-raise to terminate workflow
+    except Exception as e:
+        logger.error("Failed to ensure MinIO folders", form_name=form_name, error=str(e))
+        raise  # Re-raise to fail the workflow

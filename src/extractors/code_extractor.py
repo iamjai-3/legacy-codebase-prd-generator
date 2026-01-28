@@ -83,8 +83,7 @@ class CodeExtractor:
         self,
         zip_path: str | Path,
         extract_dir: str | Path | None = None,
-        file_mappings: list[str] | None = None,
-        dependency_file: str | Path | None = None,
+        form_name: str | None = None,
     ) -> list[CodeFile]:
         """
         Extract and parse code files from a ZIP archive.
@@ -92,8 +91,7 @@ class CodeExtractor:
         Args:
             zip_path: Path to the ZIP file
             extract_dir: Optional extraction directory
-            file_mappings: Optional list of specific file paths to extract
-            dependency_file: Optional path to dependency file with file paths
+            form_name: Form name to load dependencies from MinIO
 
         Returns:
             List of parsed CodeFile objects
@@ -103,37 +101,73 @@ class CodeExtractor:
             Path(extract_dir) if extract_dir else Path(self.settings.uploads_dir) / zip_path.stem
         )
 
-        # Parse dependency file if provided
+        # Load dependency file from MinIO
         dependency_paths: list[str] | None = None
-        if dependency_file:
-            dependency_paths = parse_dependency_file(dependency_file)
-            logger.info(
-                "Loaded dependency file",
-                file=str(dependency_file),
-                paths_count=len(dependency_paths),
-            )
+        if form_name:
+            dependency_paths = parse_dependency_file(form_name)
+            if dependency_paths:
+                logger.info(
+                    "Loaded dependency file from MinIO",
+                    form_name=form_name,
+                    paths_count=len(dependency_paths),
+                )
+            else:
+                logger.warning(
+                    "No dependencies found in MinIO for form, will extract all code files",
+                    form_name=form_name,
+                )
 
         # Extract ZIP
+        logger.info("Extracting ZIP file", zip_path=str(zip_path), extract_dir=str(extract_dir))
         extracted_files = extract_zip(zip_path, extract_dir)
+        logger.info("ZIP extraction complete", total_files=len(extracted_files))
 
-        # Filter by dependency paths or mappings if provided
-        extracted_files = self._filter_extracted_files(
-            extracted_files, dependency_paths, file_mappings, extract_dir
-        )
+        # Filter by dependency paths (if dependencies exist, otherwise extract all)
+        pre_filter_count = len(extracted_files)
+        if dependency_paths:
+            filtered_files = self._filter_extracted_files(
+                extracted_files, dependency_paths, extract_dir
+            )
+            # If filtering by dependencies results in 0 files, fallback to all files
+            if len(filtered_files) == 0:
+                logger.warning(
+                    "Dependency filtering resulted in 0 files, falling back to extracting all code files",
+                    form_name=form_name,
+                    dependency_count=len(dependency_paths),
+                    total_extracted=pre_filter_count,
+                )
+                # extracted_files already contains all files, no need to reassign
+            else:
+                extracted_files = filtered_files
+                logger.info(
+                    "Filtered files by dependencies",
+                    before_filter=pre_filter_count,
+                    after_filter=len(extracted_files),
+                    dependency_count=len(dependency_paths),
+                )
+        else:
+            logger.info("No dependencies specified, extracting all code files", total_extracted=len(extracted_files))
 
         # Parse code files
         code_files: list[CodeFile] = []
+        skipped_files = 0
         for file_path in extracted_files:
             if is_code_file(file_path):
                 code_file = self._parse_code_file(file_path, extract_dir)
                 if code_file:
                     code_files.append(code_file)
+                else:
+                    skipped_files += 1
+            else:
+                skipped_files += 1
 
         logger.info(
             "Extracted code files from ZIP",
             zip=str(zip_path),
-            total_files=len(code_files),
-            filtered=bool(dependency_paths or file_mappings),
+            total_extracted=len(extracted_files),
+            code_files_parsed=len(code_files),
+            skipped=skipped_files,
+            filtered_by_dependencies=bool(dependency_paths),
         )
 
         return code_files
@@ -141,37 +175,32 @@ class CodeExtractor:
     def extract_from_directory(
         self,
         directory: str | Path,
-        file_mappings: list[str] | None = None,
-        dependency_file: str | Path | None = None,
+        form_name: str | None = None,
     ) -> list[CodeFile]:
         """
         Extract and parse code files from a directory.
 
         Args:
             directory: Path to the directory
-            file_mappings: Optional list of specific file paths
-            dependency_file: Optional path to dependency file with file paths
+            form_name: Form name to load dependencies from MinIO
 
         Returns:
             List of parsed CodeFile objects
         """
         directory = Path(directory)
-        code_files: list[CodeFile] = []
 
-        # Parse dependency file if provided
+        # Load dependency file from MinIO
         dependency_paths: list[str] | None = None
-        if dependency_file:
-            dependency_paths = parse_dependency_file(dependency_file)
+        if form_name:
+            dependency_paths = parse_dependency_file(form_name)
             logger.info(
-                "Loaded dependency file",
-                file=str(dependency_file),
+                "Loaded dependency file from MinIO",
+                form_name=form_name,
                 paths_count=len(dependency_paths),
             )
 
         if dependency_paths:
             code_files = self._process_files_by_dependencies(directory, dependency_paths)
-        elif file_mappings:
-            code_files = self._process_files_by_mappings(directory, file_mappings)
         else:
             code_files = self._process_all_code_files(directory)
 
@@ -179,7 +208,7 @@ class CodeExtractor:
             "Extracted code files from directory",
             directory=str(directory),
             total_files=len(code_files),
-            filtered=bool(dependency_paths or file_mappings),
+            filtered=bool(dependency_paths),
         )
 
         return code_files
@@ -188,30 +217,25 @@ class CodeExtractor:
         self,
         extracted_files: list[Path],
         dependency_paths: list[str] | None,
-        file_mappings: list[str] | None,
         extract_dir: Path,
     ) -> list[Path]:
-        """Filter extracted files by dependency paths or mappings."""
-        if dependency_paths:
-            filtered_files = [
-                f for f in extracted_files if match_file_path(f, dependency_paths, extract_dir)
-            ]
-            logger.info(
-                "Filtered files by dependency paths",
-                total_extracted=len(filtered_files),
-                dependency_paths=len(dependency_paths),
-            )
-            return filtered_files
-        if file_mappings:
-            mapping_set = {Path(m).name for m in file_mappings}
-            filtered_files = [f for f in extracted_files if f.name in mapping_set]
-            logger.info(
-                "Filtered files by mappings",
-                total_extracted=len(filtered_files),
-                mappings_count=len(file_mappings),
-            )
-            return filtered_files
-        return extracted_files
+        """Filter extracted files by dependency paths from MinIO."""
+        if not dependency_paths:
+            return extracted_files
+            
+        filtered_files = [
+            f for f in extracted_files if match_file_path(f, dependency_paths, extract_dir)
+        ]
+        
+        logger.info(
+            "Filtered files by dependency paths",
+            total_extracted=len(extracted_files),
+            filtered_count=len(filtered_files),
+            dependency_paths=len(dependency_paths),
+            sample_deps=dependency_paths[:5] if dependency_paths else [],
+        )
+        
+        return filtered_files
 
     def _parse_code_file(self, file_path: Path, base_path: Path) -> CodeFile | None:
         """
@@ -631,7 +655,6 @@ class CodeExtractor:
             # Determine document type based on file characteristics
             is_dto = any("DTO" in c or "dto" in c.lower() for c in code_file.classes) or "dto" in code_file.path.lower()
             is_model = code_file.file_type == "model" or "model" in code_file.path.lower()
-            is_support = "Support" in code_file.path or "support" in code_file.path.lower()
             
             # Create class definition document (for DTOs/models)
             if is_dto or is_model:

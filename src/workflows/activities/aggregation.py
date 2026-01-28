@@ -7,7 +7,6 @@ from temporalio import activity
 from src.agents.base_agent import AgentContext
 from src.agents.prd_aggregator_agent import PRDAggregatorAgent
 from src.utils.data_reconstruction import (
-    reconstruct_atlassian_analysis,
     reconstruct_requirements_analysis,
     reconstruct_screenshot_analysis,
     reconstruct_user_flow_analysis,
@@ -21,7 +20,6 @@ logger = get_logger(__name__)
 async def aggregate_prd_activity(
     form_name: str,
     screenshot_analysis: dict[str, Any] | None = None,
-    jira_analysis: dict[str, Any] | None = None,
     requirements_analysis: dict[str, Any] | None = None,
     user_flow_analysis: dict[str, Any] | None = None,
     database_analysis: dict[str, Any] | None = None,
@@ -36,7 +34,7 @@ async def aggregate_prd_activity(
     result = await agent.analyze(
         context,
         screenshot_analysis=reconstruct_screenshot_analysis(screenshot_analysis, form_name),
-        atlassian_analysis=reconstruct_atlassian_analysis(jira_analysis, form_name),
+        atlassian_analysis=None,  # Jira analysis removed
         requirements_analysis=reconstruct_requirements_analysis(requirements_analysis, form_name),
         user_flow_analysis=reconstruct_user_flow_analysis(user_flow_analysis, form_name),
         database_analysis=database_analysis,

@@ -65,7 +65,7 @@ class MinioSettings(BaseSettings):
     endpoint: str = Field(default="localhost:9000", description="Minio endpoint")
     access_key: str = Field(default="minioadmin", description="Minio access key")
     secret_key: str = Field(default="minioadmin", description="Minio secret key")
-    bucket: str = Field(default="screenshots", description="Default bucket name")
+    bucket: str = Field(default="metadatas", description="Default bucket name")
     secure: bool = Field(default=False, description="Use HTTPS")
 
 

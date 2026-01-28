@@ -117,22 +117,44 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
             return self.create_error_result(e, timer)
 
     def _load_database_doc(self, db_doc_path: str | None, form_name: str) -> str:
-        """Load form-specific database documentation from file."""
+        """Load form-specific database documentation from MinIO or local file."""
+        from src.utils.minio_sync import MinioSync
+
+        form_name_upper = form_name.upper()
+
+        # Try MinIO first: FORMS/{FORM_NAME}/FORM_DOCS/{FORM_NAME}_SourceTables.md
+        try:
+            minio_sync = MinioSync()
+            minio_object_name = f"FORMS/{form_name_upper}/FORM_DOCS/{form_name_upper}_SourceTables.md"
+            
+            # Check if object exists in MinIO
+            if minio_sync.file_exists(minio_object_name):
+                content = minio_sync.get_file_text(minio_object_name)
+                self.logger.info(
+                    "Loaded form-specific source tables from MinIO",
+                    object_name=minio_object_name,
+                    form_name=form_name,
+                )
+                return content
+        except Exception as e:
+            self.logger.debug(f"MinIO lookup failed, trying local: {e}")
+
+        # Fallback to local filesystem
         if db_doc_path is None:
             # Try to find form-specific source tables file first
-            # Look for src/PRDs/{FORM_NAME}/{FORM_NAME}_SourceTables.md
-            form_name_upper = form_name.upper()
+            # Look for src/PRDs/{FORM_NAME}/FORM_DOCS/{FORM_NAME}_SourceTables.md
             form_specific_path = (
                 Path(__file__).parent.parent.parent
                 / "PRDs"
                 / form_name_upper
+                / "FORM_DOCS"
                 / f"{form_name_upper}_SourceTables.md"
             )
             
             if form_specific_path.exists():
                 db_doc_path = form_specific_path
                 self.logger.info(
-                    "Found form-specific source tables file",
+                    "Found form-specific source tables file (local)",
                     path=str(db_doc_path),
                     form_name=form_name,
                 )
