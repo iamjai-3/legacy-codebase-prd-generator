@@ -116,8 +116,12 @@ prd-agent generate \
   --bucket le07 \
   --output ./output \
   --skip-jira
+```
 
+### LE11 Full Command (with Database Analysis)
 
+```bash
+# Basic command (database analysis runs automatically)
 prd-agent generate \
   -f le11 \
   -z src/templates_code_zip/oases-master.zip \
@@ -125,6 +129,26 @@ prd-agent generate \
   -b le11 \
   -o ./output \
   --skip-jira
+
+# With custom database documentation path
+prd-agent generate \
+  -f le11 \
+  -z src/templates_code_zip/oases-master.zip \
+  -d src/form_dependencies/le11_dependencies.txt \
+  -b le11 \
+  -o ./output \
+  --skip-jira \
+  --db-doc src/db_doc/Database_DOC.md
+
+# Skip database analysis if needed
+prd-agent generate \
+  -f le11 \
+  -z src/templates_code_zip/oases-master.zip \
+  -d src/form_dependencies/le11_dependencies.txt \
+  -b le11 \
+  -o ./output \
+  --skip-jira \
+  --skip-db-analysis
 ```
 
 ### Skip Jira and Screenshots
@@ -347,7 +371,74 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 
 ---
 
-## 12. Troubleshooting
+## 12. Code Migration Commands
+
+### Basic Code Migration (with Database Analysis)
+
+```bash
+prd-agent migrate-code \
+  --form-name le07 \
+  --output ./output/migratedCode
+```
+
+### Code Migration with Custom Database Documentation
+
+```bash
+prd-agent migrate-code \
+  --form-name le07 \
+  --output ./output/migratedCode \
+  --db-doc src/db_doc/Database_DOC.md
+```
+
+### Code Migration without Database Analysis
+
+```bash
+prd-agent migrate-code \
+  --form-name le07 \
+  --output ./output/migratedCode \
+  --skip-db-analysis
+```
+
+### Short Form
+
+```bash
+prd-agent migrate-code -f le07 -o ./output/migratedCode
+```
+
+### Code Migration for LE11 (with dependencies)
+
+```bash
+prd-agent migrate-code \
+  -f le11 \
+  -o ./output/migratedCode \
+  --db-doc src/db_doc/Database_DOC.md
+```
+
+**Note:** The database analysis step automatically:
+- Analyzes database table mappings from `src/db_doc/Database_DOC.md`
+- Extracts table structures, relationships, and schema mappings
+- Stores database context in the knowledge base for enhanced code migration
+- Provides complete context: business logic, database mappings, API flows
+
+**Important:** Before running migrate-code, ensure you have:
+1. Generated the PRD first (to populate the knowledge base):
+```bash
+prd-agent generate \
+  -f le11 \
+  -z src/templates_code_zip/oases-master.zip \
+  -d src/form_dependencies/le11_dependencies.txt \
+  -b le11 \
+  -o ./output \
+  --skip-jira
+```
+2. Then run code migration:
+```bash
+prd-agent migrate-code -f le11 -o ./output/migratedCode
+```
+
+---
+
+## 13. Troubleshooting
 
 ### Test Temporal Connection
 

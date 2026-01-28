@@ -24,12 +24,14 @@ You must provide structured, accurate information that will be used for:
 Always return valid JSON when requested, following the exact schema specified."""
 
     @staticmethod
-    def extract_tables_prompt(db_content: str) -> str:
-        """Prompt for extracting table structures."""
+    def extract_tables_prompt(db_content: str, form_name: str) -> str:
+        """Prompt for extracting form-specific table structures."""
         # Limit content size to avoid token limits
         content_preview = db_content[:50000] if len(db_content) > 50000 else db_content
 
-        return f"""Analyze the following database documentation and extract all table structures.
+        return f"""Analyze the following database documentation for the "{form_name}" form/module and extract ONLY the table structures relevant to this specific form.
+
+Focus ONLY on tables mentioned in this documentation that are used by {form_name}. Ignore all other tables.
 
 DATABASE DOCUMENTATION:
 {content_preview}
@@ -84,12 +86,14 @@ Focus on:
 Return ONLY valid JSON, no markdown formatting or explanations."""
 
     @staticmethod
-    def extract_mappings_prompt(db_content: str) -> str:
-        """Prompt for extracting table mappings."""
+    def extract_mappings_prompt(db_content: str, form_name: str) -> str:
+        """Prompt for extracting form-specific table mappings."""
         # Limit content size to avoid token limits
         content_preview = db_content[:50000] if len(db_content) > 50000 else db_content
 
-        return f"""Analyze the following database documentation and extract table mappings between legacy (Oases) and target (Lumina) schemas.
+        return f"""Analyze the following database documentation for the "{form_name}" form/module and extract table mappings between legacy (Oases) and target (Lumina) schemas.
+
+Focus ONLY on tables used by {form_name}. Extract mappings only for tables mentioned in this documentation.
 
 DATABASE DOCUMENTATION:
 {content_preview}
@@ -142,13 +146,15 @@ Return ONLY valid JSON, no markdown formatting or explanations."""
 
     @staticmethod
     def generate_summary_prompt(
-        db_content: str, table_analysis: dict, mapping_analysis: dict
+        db_content: str, table_analysis: dict, mapping_analysis: dict, form_name: str
     ) -> str:
-        """Prompt for generating comprehensive schema summary."""
+        """Prompt for generating form-specific schema summary."""
         # Limit content size
         content_preview = db_content[:30000] if len(db_content) > 30000 else db_content
 
-        return f"""Generate a comprehensive database schema summary for code migration.
+        return f"""Generate a comprehensive database schema summary for the "{form_name}" form/module code migration.
+
+Focus ONLY on tables and relationships used by {form_name}. This summary will be used specifically for migrating {form_name} to the new platform.
 
 DATABASE DOCUMENTATION:
 {content_preview}

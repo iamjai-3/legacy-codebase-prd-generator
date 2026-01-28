@@ -15,6 +15,7 @@ from src.config.settings import get_settings
 from src.utils.logging_config import get_logger, setup_logging
 from src.workflows.activities import (
     aggregate_prd_activity,
+    analyze_database_activity,
     analyze_jira_activity,
     analyze_screenshots_activity,
     analyze_user_flows_activity,
@@ -41,6 +42,7 @@ ACTIVITIES = [
     # Analysis activities
     analyze_screenshots_activity,
     analyze_jira_activity,
+    analyze_database_activity,  # Analyze database table mappings
     generate_requirements_activity,
     analyze_user_flows_activity,
     # Aggregation and storage activities

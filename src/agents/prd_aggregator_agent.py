@@ -87,6 +87,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         atlassian_analysis: AtlassianIntegrationResult | None = None,
         requirements_analysis: RequirementsGeneratorResult | None = None,
         user_flow_analysis: UserFlowResult | None = None,
+        database_analysis: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> AgentResult[PRDAggregatorResult]:
         """

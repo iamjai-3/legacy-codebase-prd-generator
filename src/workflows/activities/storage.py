@@ -338,6 +338,7 @@ async def store_analysis_results_activity(
     screenshot_analysis: dict[str, Any] | None = None,
     requirements_analysis: dict[str, Any] | None = None,
     user_flow_analysis: dict[str, Any] | None = None,
+    database_analysis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Store analysis results in the vector knowledge base."""
     logger.info("Storing analysis results in vector store", form_name=form_name)
@@ -346,16 +347,25 @@ async def store_analysis_results_activity(
     total_vectors = 0
 
     # Store screenshot analysis results
-    if screenshot_analysis and screenshot_analysis.get("success"):
+    if screenshot_analysis and isinstance(screenshot_analysis, dict) and screenshot_analysis.get("success"):
         total_vectors += _store_screenshot_analysis(qdrant, form_name, screenshot_analysis)
 
     # Store requirements analysis
-    if requirements_analysis and requirements_analysis.get("success"):
+    if requirements_analysis and isinstance(requirements_analysis, dict) and requirements_analysis.get("success"):
         total_vectors += _store_requirements_analysis(qdrant, form_name, requirements_analysis)
 
     # Store user flow analysis
-    if user_flow_analysis and user_flow_analysis.get("success"):
+    if user_flow_analysis and isinstance(user_flow_analysis, dict) and user_flow_analysis.get("success"):
         total_vectors += _store_user_flow_analysis(qdrant, form_name, user_flow_analysis)
+
+    # Note: Database analysis results are already stored by DatabaseAnalysisAgent
+    # This is just for logging consistency
+    if database_analysis and isinstance(database_analysis, dict) and database_analysis.get("success"):
+        logger.info(
+            "Database analysis already stored",
+            form_name=form_name,
+            vectors_stored=database_analysis.get("vectors_stored", 0),
+        )
 
     logger.info("Stored analysis results", form_name=form_name, total_vectors=total_vectors)
 

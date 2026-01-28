@@ -6,6 +6,7 @@ from temporalio import activity
 
 from src.agents.atlassian_integration_agent import AtlassianIntegrationAgent
 from src.agents.base_agent import AgentContext
+from src.agents.database_analysis_agent import DatabaseAnalysisAgent
 from src.agents.requirements_generator_agent import RequirementsGeneratorAgent
 from src.agents.screenshot_analysis_agent import ScreenshotAnalysisAgent
 from src.agents.user_flow_agent import UserFlowAgent
@@ -155,6 +156,39 @@ async def analyze_user_flows_activity(
             "exit_points": result.data.exit_points,
             "user_journey_map": result.data.user_journey_map,
             "flow_diagram_mermaid": result.data.flow_diagram_mermaid,
+            "execution_time_ms": result.execution_time_ms,
+        }
+
+    return {
+        "success": False,
+        "error": result.error,
+        "execution_time_ms": result.execution_time_ms,
+    }
+
+
+@activity.defn
+async def analyze_database_activity(
+    form_name: str,
+    db_doc_path: str | None = None,
+) -> dict[str, Any]:
+    """Analyze database table mappings using the DatabaseAnalysisAgent."""
+    logger.info("Starting database analysis", form_name=form_name, db_doc_path=db_doc_path)
+
+    agent = DatabaseAnalysisAgent()
+    context = AgentContext(form_name=form_name)
+
+    result = await agent.analyze(context, db_doc_path=db_doc_path)
+
+    if result.success and result.data:
+        return {
+            "success": True,
+            "tables_analyzed": result.data.tables_analyzed,
+            "relationships_mapped": result.data.relationships_mapped,
+            "legacy_tables": result.data.legacy_tables,
+            "target_tables": result.data.target_tables,
+            "table_mappings": result.data.table_mappings,
+            "schema_summary": result.data.schema_summary,
+            "vectors_stored": result.data.vectors_stored,
             "execution_time_ms": result.execution_time_ms,
         }
 

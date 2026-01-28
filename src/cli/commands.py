@@ -67,6 +67,12 @@ def generate(
     recreate_vectors: bool = typer.Option(
         False, "--recreate-vectors", help="Recreate vector collection"
     ),
+    db_doc_path: str | None = typer.Option(
+        None, "--db-doc", help="Path to database documentation (defaults to src/db_doc/Database_DOC.md)"
+    ),
+    skip_database_analysis: bool = typer.Option(
+        False, "--skip-db-analysis", help="Skip database table mapping analysis"
+    ),
     use_workflow: bool = typer.Option(
         True, "--use-workflow/--direct", help="Use Temporal workflow or direct execution"
     ),
@@ -105,6 +111,8 @@ def generate(
                 skip_screenshots=skip_screenshots,
                 skip_jira=skip_jira,
                 recreate_vectors=recreate_vectors,
+                db_doc_path=db_doc_path,
+                skip_database_analysis=skip_database_analysis,
             )
         )
     else:
@@ -137,6 +145,8 @@ async def _run_workflow_generation(
     skip_screenshots: bool,
     skip_jira: bool,
     recreate_vectors: bool,
+    db_doc_path: str | None = None,
+    skip_database_analysis: bool = False,
 ):
     """Run PRD generation via Temporal workflow."""
     settings = get_settings()
@@ -167,6 +177,8 @@ async def _run_workflow_generation(
                 skip_screenshots=skip_screenshots,
                 skip_jira=skip_jira,
                 recreate_vector_collection=recreate_vectors,
+                db_doc_path=db_doc_path,
+                skip_database_analysis=skip_database_analysis,
             )
 
             # Execute workflow

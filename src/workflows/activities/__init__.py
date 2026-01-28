@@ -10,6 +10,7 @@ Activities are organized into modules by function:
 
 from src.workflows.activities.aggregation import aggregate_prd_activity
 from src.workflows.activities.analysis import (
+    analyze_database_activity,
     analyze_jira_activity,
     analyze_screenshots_activity,
     analyze_user_flows_activity,
@@ -36,6 +37,7 @@ __all__ = [
     # Analysis
     "analyze_screenshots_activity",
     "analyze_jira_activity",
+    "analyze_database_activity",
     "generate_requirements_activity",
     "analyze_user_flows_activity",
     # Aggregation

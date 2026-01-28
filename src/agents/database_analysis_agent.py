@@ -1,6 +1,5 @@
 """Database Analysis Agent for extracting and analyzing database table mappings."""
 
-import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -8,6 +7,7 @@ from typing import Any
 from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
 from src.prompts.database_analysis import DatabaseAnalysisPrompts
 from src.utils.logging_config import ExecutionTimer, get_logger
+from src.utils.serialization import extract_json_object
 
 logger = get_logger(__name__)
 
@@ -67,16 +67,16 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
         )
 
         try:
-            # 1. Load database documentation
-            db_content = self._load_database_doc(db_doc_path)
+            # 1. Load form-specific database documentation
+            db_content = self._load_database_doc(db_doc_path, context.form_name)
 
-            # 2. Extract table structures and relationships
+            # 2. Extract form-specific table structures and relationships
             table_analysis = await self._analyze_tables(context, db_content)
 
-            # 3. Extract table mappings (legacy to target)
+            # 3. Extract form-specific table mappings (legacy to target)
             mapping_analysis = await self._analyze_mappings(context, db_content)
 
-            # 4. Generate comprehensive schema summary
+            # 4. Generate form-specific schema summary
             schema_summary = await self._generate_schema_summary(
                 context, db_content, table_analysis, mapping_analysis
             )
@@ -113,35 +113,54 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
             return self.create_success_result(result, timer)
 
         except Exception as e:
-            self.logger.error(
-                "Database analysis failed", error=str(e), form_name=context.form_name
-            )
+            self.logger.error("Database analysis failed", error=str(e), form_name=context.form_name)
             return self.create_error_result(e, timer)
 
-    def _load_database_doc(self, db_doc_path: str | None) -> str:
-        """Load database documentation from file."""
+    def _load_database_doc(self, db_doc_path: str | None, form_name: str) -> str:
+        """Load form-specific database documentation from file."""
         if db_doc_path is None:
-            # Default to src/db_doc/Database_DOC.md
-            db_doc_path = Path(__file__).parent.parent.parent / "db_doc" / "Database_DOC.md"
+            # Try to find form-specific source tables file first
+            # Look for src/PRDs/{FORM_NAME}/{FORM_NAME}_SourceTables.md
+            form_name_upper = form_name.upper()
+            form_specific_path = (
+                Path(__file__).parent.parent.parent
+                / "PRDs"
+                / form_name_upper
+                / f"{form_name_upper}_SourceTables.md"
+            )
+            
+            if form_specific_path.exists():
+                db_doc_path = form_specific_path
+                self.logger.info(
+                    "Found form-specific source tables file",
+                    path=str(db_doc_path),
+                    form_name=form_name,
+                )
+            else:
+                # Fallback to full database doc
+                db_doc_path = Path(__file__).parent.parent / "db_doc" / "Database_DOC.md"
+                self.logger.info(
+                    "Using full database documentation (form-specific not found)",
+                    path=str(db_doc_path),
+                    form_name=form_name,
+                )
 
         db_path = Path(db_doc_path)
         if not db_path.exists():
             raise FileNotFoundError(f"Database documentation not found: {db_path}")
 
-        self.logger.info("Loading database documentation", path=str(db_path))
+        self.logger.info("Loading database documentation", path=str(db_path), form_name=form_name)
         with open(db_path, encoding="utf-8") as f:
             content = f.read()
 
         self.logger.debug(
-            "Database documentation loaded", size=len(content), path=str(db_path)
+            "Database documentation loaded", size=len(content), path=str(db_path), form_name=form_name
         )
         return content
 
-    async def _analyze_tables(
-        self, context: AgentContext, db_content: str
-    ) -> dict[str, Any]:
-        """Extract table structures from database documentation."""
-        prompt = DatabaseAnalysisPrompts.extract_tables_prompt(db_content)
+    async def _analyze_tables(self, context: AgentContext, db_content: str) -> dict[str, Any]:
+        """Extract form-specific table structures from database documentation."""
+        prompt = DatabaseAnalysisPrompts.extract_tables_prompt(db_content, context.form_name)
 
         response = await self.invoke_llm(context, prompt)
 
@@ -161,11 +180,9 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
             "raw_analysis": response,
         }
 
-    async def _analyze_mappings(
-        self, context: AgentContext, db_content: str
-    ) -> dict[str, Any]:
-        """Extract table mappings between legacy and target schemas."""
-        prompt = DatabaseAnalysisPrompts.extract_mappings_prompt(db_content)
+    async def _analyze_mappings(self, context: AgentContext, db_content: str) -> dict[str, Any]:
+        """Extract form-specific table mappings between legacy and target schemas."""
+        prompt = DatabaseAnalysisPrompts.extract_mappings_prompt(db_content, context.form_name)
 
         response = await self.invoke_llm(context, prompt)
 
@@ -191,9 +208,9 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
         table_analysis: dict[str, Any],
         mapping_analysis: dict[str, Any],
     ) -> str:
-        """Generate comprehensive schema summary."""
+        """Generate form-specific schema summary."""
         prompt = DatabaseAnalysisPrompts.generate_summary_prompt(
-            db_content, table_analysis, mapping_analysis
+            db_content, table_analysis, mapping_analysis, context.form_name
         )
 
         response = await self.invoke_llm(context, prompt)
@@ -218,9 +235,7 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
         )
 
         # Store table mappings
-        total_vectors += self._store_mappings(
-            form_name, mapping_analysis.get("mappings", [])
-        )
+        total_vectors += self._store_mappings(form_name, mapping_analysis.get("mappings", []))
 
         # Store relationships
         total_vectors += self._store_relationships(
@@ -247,9 +262,7 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
 
         return total_vectors
 
-    def _store_tables(
-        self, form_name: str, tables: list[dict[str, Any]], schema: str
-    ) -> int:
+    def _store_tables(self, form_name: str, tables: list[dict[str, Any]], schema: str) -> int:
         """Store table structures in vector store."""
         count = 0
         for table in tables:
@@ -267,9 +280,7 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
             count += 1
         return count
 
-    def _store_mappings(
-        self, form_name: str, mappings: list[dict[str, Any]]
-    ) -> int:
+    def _store_mappings(self, form_name: str, mappings: list[dict[str, Any]]) -> int:
         """Store table mappings in vector store."""
         count = 0
         for mapping in mappings:
@@ -287,9 +298,7 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
             count += 1
         return count
 
-    def _store_relationships(
-        self, form_name: str, relationships: list[dict[str, Any]]
-    ) -> int:
+    def _store_relationships(self, form_name: str, relationships: list[dict[str, Any]]) -> int:
         """Store relationships in vector store."""
         count = 0
         for rel in relationships:
@@ -389,7 +398,3 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
             lines.append(f"Description: {rel.get('description')}")
 
         return "\n".join(lines)
-
-
-# Import here to avoid circular dependency
-from src.utils.serialization import extract_json_object

@@ -16,6 +16,7 @@ from temporalio.common import RetryPolicy
 with workflow.unsafe.imports_passed_through():
     from src.workflows.activities import (
         aggregate_prd_activity,
+        analyze_database_activity,
         analyze_jira_activity,
         analyze_screenshots_activity,
         analyze_user_flows_activity,
@@ -47,6 +48,8 @@ class PRDGenerationInput:
     recreate_vector_collection: bool = False
     skip_screenshots: bool = False
     skip_jira: bool = False
+    db_doc_path: str | None = None
+    skip_database_analysis: bool = False
 
 
 @dataclass
@@ -100,8 +103,10 @@ class PRDGenerationWorkflow:
         """Get a value from result dict only if the result was successful."""
         return result.get(key, default) if result.get("success") else default
 
-    def _result_if_success(self, result: dict[str, Any]) -> dict[str, Any] | None:
+    def _result_if_success(self, result: dict[str, Any] | None) -> dict[str, Any] | None:
         """Return result dict if successful, None otherwise."""
+        if result is None:
+            return None
         return result if result.get("success") else None
 
     def _build_agent_results(
@@ -111,6 +116,7 @@ class PRDGenerationWorkflow:
         requirements: dict[str, Any],
         user_flow: dict[str, Any],
         existing_prd: dict[str, Any],
+        database: dict[str, Any],
     ) -> dict[str, bool]:
         """Build agent results summary."""
         return {
@@ -119,6 +125,7 @@ class PRDGenerationWorkflow:
             "requirements_analysis": requirements.get("success", False),
             "user_flow_analysis": user_flow.get("success", False),
             "existing_prd_extraction": existing_prd.get("success", False),
+            "database_analysis": database.get("success", False),
         }
 
     def _build_success_output(
@@ -179,10 +186,13 @@ class PRDGenerationWorkflow:
                 input, extraction, analysis, long_opts
             )
 
-            # Phase 5.5: Store Analysis Results
+            # Phase 5.5: Store Analysis Results (database analysis not yet available)
             await self._store_analysis_results(
-                input, analysis, requirements_analysis, user_flow_analysis, opts
+                input, analysis, requirements_analysis, user_flow_analysis, None, opts
             )
+
+            # Phase 5.9: Database Analysis (form-specific, runs just before PRD aggregation)
+            database_analysis = await self._analyze_database(input, opts)
 
             # Phase 6 & 7: Aggregate and Save PRD
             return await self._finalize_prd(
@@ -191,6 +201,7 @@ class PRDGenerationWorkflow:
                 analysis,
                 requirements_analysis,
                 user_flow_analysis,
+                database_analysis,
                 vector_result,
                 long_opts,
                 opts,
@@ -288,6 +299,68 @@ class PRDGenerationWorkflow:
         )
         return result
 
+    async def _analyze_database(
+        self, input: PRDGenerationInput, opts: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Phase 5.9: Analyze form-specific database table mappings (runs just before PRD aggregation)."""
+        workflow.logger.info("Phase 5.9: Analyzing form-specific database table mappings")
+
+        if input.skip_database_analysis:
+            workflow.logger.info("Skipping database analysis")
+            return {
+                "success": False,
+                "skipped": True,
+                "tables_analyzed": 0,
+                "relationships_mapped": 0,
+                "vectors_stored": 0,
+            }
+
+        try:
+            # Determine form-specific source tables file path
+            # Look for src/PRDs/{FORM_NAME}/{FORM_NAME}_SourceTables.md
+            form_specific_path = None
+            if not input.db_doc_path:
+                from pathlib import Path
+                form_name_upper = input.form_name.upper()
+                # Try src/PRDs/{FORM_NAME}/{FORM_NAME}_SourceTables.md
+                form_specific_path = (
+                    Path(__file__).parent.parent.parent
+                    / "PRDs"
+                    / form_name_upper
+                    / f"{form_name_upper}_SourceTables.md"
+                )
+                if not form_specific_path.exists():
+                    form_specific_path = None
+                    workflow.logger.warning(
+                        f"Form-specific source tables file not found for {input.form_name}"
+                    )
+
+            result = await workflow.execute_activity(
+                analyze_database_activity,
+                args=[
+                    input.form_name,
+                    str(form_specific_path) if form_specific_path else input.db_doc_path,
+                ],
+                **opts,
+            )
+
+            workflow.logger.info(
+                f"Database analysis complete - Tables: {result.get('tables_analyzed', 0)}, "
+                f"Relationships: {result.get('relationships_mapped', 0)}, "
+                f"Vectors: {result.get('vectors_stored', 0)}"
+            )
+
+            return result
+        except Exception as e:
+            workflow.logger.warning(f"Database analysis failed: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "tables_analyzed": 0,
+                "relationships_mapped": 0,
+                "vectors_stored": 0,
+            }
+
     async def _run_initial_analysis(
         self,
         input: PRDGenerationInput,
@@ -362,6 +435,7 @@ class PRDGenerationWorkflow:
         analysis: dict[str, dict[str, Any]],
         requirements: dict[str, Any],
         user_flow: dict[str, Any],
+        database_analysis: dict[str, Any],
         opts: dict[str, Any],
     ) -> None:
         """Phase 5.5: Store analysis results in knowledge base."""
@@ -374,6 +448,7 @@ class PRDGenerationWorkflow:
                 self._result_if_success(analysis["screenshot"]),
                 self._result_if_success(requirements),
                 self._result_if_success(user_flow),
+                self._result_if_success(database_analysis),
             ],
             **opts,
         )
@@ -385,6 +460,7 @@ class PRDGenerationWorkflow:
         analysis: dict[str, dict[str, Any]],
         requirements: dict[str, Any],
         user_flow: dict[str, Any],
+        database_analysis: dict[str, Any],
         vector_result: dict[str, Any],
         long_opts: dict[str, Any],
         opts: dict[str, Any],
@@ -400,6 +476,7 @@ class PRDGenerationWorkflow:
                 self._result_if_success(analysis["jira"]),
                 self._result_if_success(requirements),
                 self._result_if_success(user_flow),
+                self._result_if_success(database_analysis),
             ],
             **long_opts,
         )
@@ -427,6 +504,7 @@ class PRDGenerationWorkflow:
             requirements,
             user_flow,
             extraction["existing_prd"],
+            database_analysis,
         )
 
         return self._build_success_output(

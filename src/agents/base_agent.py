@@ -227,7 +227,12 @@ class BaseAgent(ABC, Generic[T]):
     # ========== Vector Store Methods ==========
 
     def retrieve_context(
-        self, form_name: str, query: str, limit: int = 5, doc_type: str | None = None, chunk_type: str | None = None
+        self,
+        form_name: str,
+        query: str,
+        limit: int = 5,
+        doc_type: str | None = None,
+        chunk_type: str | None = None,
     ) -> list[str]:
         """
         Retrieve relevant context from the vector store.
@@ -248,9 +253,9 @@ class BaseAgent(ABC, Generic[T]):
                 filter_metadata["doc_type"] = doc_type
             if chunk_type:
                 filter_metadata["chunk_type"] = chunk_type
-            
+
             filter_metadata = filter_metadata if filter_metadata else None
-            
+
             results = self.vector_store.search(
                 form_name=form_name,
                 query=query,
