@@ -1,7 +1,5 @@
 """Storage activities for PRD generation workflow."""
 
-from src.utils.minio_sync import MinioSync
-
 from datetime import datetime
 from typing import Any
 
@@ -11,6 +9,7 @@ from src.extractors.minio_extractor import MinioExtractor, Screenshot
 from src.utils.data_reconstruction import _restore_image_data
 from src.utils.file_utils import ensure_directory, write_json
 from src.utils.logging_config import get_logger
+from src.utils.minio_sync import MinioSync
 from src.vector_store.qdrant_manager import QdrantManager
 
 logger = get_logger(__name__)
@@ -336,20 +335,36 @@ async def store_analysis_results_activity(
     total_vectors = 0
 
     # Store screenshot analysis results
-    if screenshot_analysis and isinstance(screenshot_analysis, dict) and screenshot_analysis.get("success"):
+    if (
+        screenshot_analysis
+        and isinstance(screenshot_analysis, dict)
+        and screenshot_analysis.get("success")
+    ):
         total_vectors += _store_screenshot_analysis(qdrant, form_name, screenshot_analysis)
 
     # Store requirements analysis
-    if requirements_analysis and isinstance(requirements_analysis, dict) and requirements_analysis.get("success"):
+    if (
+        requirements_analysis
+        and isinstance(requirements_analysis, dict)
+        and requirements_analysis.get("success")
+    ):
         total_vectors += _store_requirements_analysis(qdrant, form_name, requirements_analysis)
 
     # Store user flow analysis
-    if user_flow_analysis and isinstance(user_flow_analysis, dict) and user_flow_analysis.get("success"):
+    if (
+        user_flow_analysis
+        and isinstance(user_flow_analysis, dict)
+        and user_flow_analysis.get("success")
+    ):
         total_vectors += _store_user_flow_analysis(qdrant, form_name, user_flow_analysis)
 
     # Note: Database analysis results are already stored by DatabaseAnalysisAgent
     # This is just for logging consistency
-    if database_analysis and isinstance(database_analysis, dict) and database_analysis.get("success"):
+    if (
+        database_analysis
+        and isinstance(database_analysis, dict)
+        and database_analysis.get("success")
+    ):
         logger.info(
             "Database analysis already stored",
             form_name=form_name,
@@ -525,7 +540,9 @@ async def save_prd_activity(
 
 
 @activity.defn
-async def ensure_minio_folders_activity(form_name: str, bucket: str | None = None) -> dict[str, Any]:
+async def ensure_minio_folders_activity(
+    form_name: str, bucket: str | None = None
+) -> dict[str, Any]:
     """
     Ensure MinIO folder structure exists for a form (only creates if missing).
 
@@ -541,20 +558,21 @@ async def ensure_minio_folders_activity(form_name: str, bucket: str | None = Non
     Returns:
         Dictionary with creation status
     """
-    from src.utils.minio_sync import MinioSync
 
     try:
         # Use default bucket (metadatas) if not specified
         sync = MinioSync(bucket=bucket)  # bucket=None uses default "metadatas" from settings
         logger.info("Ensuring MinIO folder structure", bucket=sync.bucket, form_name=form_name)
-        
+
         # Verify bucket exists (throws error if not)
         sync.ensure_bucket(bucket=None, must_exist=True)
-        
+
         # Create base folder structure if needed (only creates if missing)
         base_results = sync.create_folder_structure(bucket=None)  # Uses sync.bucket (metadatas)
         # Create form-specific folders (only creates if missing)
-        form_results = sync.create_form_folders(form_name, bucket=None)  # Uses sync.bucket (metadatas)
+        form_results = sync.create_form_folders(
+            form_name, bucket=None
+        )  # Uses sync.bucket (metadatas)
 
         logger.info(
             "Ensured MinIO folder structure",
@@ -571,7 +589,11 @@ async def ensure_minio_folders_activity(form_name: str, bucket: str | None = Non
         }
     except ValueError as e:
         # Bucket doesn't exist - this is a critical error
-        logger.error("Bucket does not exist - workflow terminated", bucket=sync.bucket if 'sync' in locals() else bucket, error=str(e))
+        logger.error(
+            "Bucket does not exist - workflow terminated",
+            bucket=sync.bucket if "sync" in locals() else bucket,
+            error=str(e),
+        )
         raise  # Re-raise to terminate workflow
     except Exception as e:
         logger.error("Failed to ensure MinIO folders", form_name=form_name, error=str(e))

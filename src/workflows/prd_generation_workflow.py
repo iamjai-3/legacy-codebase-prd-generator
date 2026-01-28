@@ -221,17 +221,13 @@ class PRDGenerationWorkflow:
             else:
                 # Bucket doesn't exist - this is critical, workflow should fail
                 error = result.get("error", "Unknown error")
-                workflow.logger.error(
-                    f"MinIO folder setup failed for {input.form_name}: {error}"
-                )
+                workflow.logger.error(f"MinIO folder setup failed for {input.form_name}: {error}")
                 raise ValueError(f"MinIO setup failed: {error}")
         except ValueError:
             # Re-raise ValueError (bucket doesn't exist) to terminate workflow
             raise
         except Exception as e:
-            workflow.logger.error(
-                f"Could not ensure MinIO folders for {input.form_name}: {str(e)}"
-            )
+            workflow.logger.error(f"Could not ensure MinIO folders for {input.form_name}: {str(e)}")
             raise  # Re-raise to fail workflow
 
     async def _extract_data(
