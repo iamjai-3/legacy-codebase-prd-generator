@@ -101,55 +101,55 @@ class CodeExtractor:
             Path(extract_dir) if extract_dir else Path(self.settings.uploads_dir) / zip_path.stem
         )
 
-        # Load dependency file from MinIO
-        dependency_paths: list[str] | None = None
-        if form_name:
-            dependency_paths = parse_dependency_file(form_name)
-            if dependency_paths:
-                logger.info(
-                    "Loaded dependency file from MinIO",
-                    form_name=form_name,
-                    paths_count=len(dependency_paths),
-                )
-            else:
-                logger.warning(
-                    "No dependencies found in MinIO for form, will extract all code files",
-                    form_name=form_name,
-                )
+        # Load dependency file from MinIO - REQUIRED
+        if not form_name:
+            error_msg = "form_name is required to load dependency file from MinIO"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        dependency_paths = parse_dependency_file(form_name)
+        if not dependency_paths:
+            # Dependency file is REQUIRED - throw error if not found
+            error_msg = (
+                f"Dependency file not found in MinIO for form '{form_name}'. "
+                f"Please create the file at: FORMS/{form_name.upper()}/FORM_FILE_DEPENDENCIES/{form_name.lower()}_dependencies.txt"
+            )
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+
+        logger.info(
+            "Loaded dependency file from MinIO",
+            form_name=form_name,
+            paths_count=len(dependency_paths),
+        )
 
         # Extract ZIP
         logger.info("Extracting ZIP file", zip_path=str(zip_path), extract_dir=str(extract_dir))
         extracted_files = extract_zip(zip_path, extract_dir)
         logger.info("ZIP extraction complete", total_files=len(extracted_files))
 
-        # Filter by dependency paths (if dependencies exist, otherwise extract all)
+        # Filter by dependency paths (REQUIRED)
         pre_filter_count = len(extracted_files)
-        if dependency_paths:
-            filtered_files = self._filter_extracted_files(
-                extracted_files, dependency_paths, extract_dir
+        filtered_files = self._filter_extracted_files(
+            extracted_files, dependency_paths, extract_dir
+        )
+
+        if len(filtered_files) == 0:
+            error_msg = (
+                f"Dependency filtering resulted in 0 files for form '{form_name}'. "
+                f"Please check the paths in your dependency file at: "
+                f"FORMS/{form_name.upper()}/FORM_FILE_DEPENDENCIES/{form_name.lower()}_dependencies.txt"
             )
-            # If filtering by dependencies results in 0 files, fallback to all files
-            if len(filtered_files) == 0:
-                logger.warning(
-                    "Dependency filtering resulted in 0 files, falling back to extracting all code files",
-                    form_name=form_name,
-                    dependency_count=len(dependency_paths),
-                    total_extracted=pre_filter_count,
-                )
-                # extracted_files already contains all files, no need to reassign
-            else:
-                extracted_files = filtered_files
-                logger.info(
-                    "Filtered files by dependencies",
-                    before_filter=pre_filter_count,
-                    after_filter=len(extracted_files),
-                    dependency_count=len(dependency_paths),
-                )
-        else:
-            logger.info(
-                "No dependencies specified, extracting all code files",
-                total_extracted=len(extracted_files),
-            )
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        extracted_files = filtered_files
+        logger.info(
+            "Filtered files by dependencies",
+            before_filter=pre_filter_count,
+            after_filter=len(extracted_files),
+            dependency_count=len(dependency_paths),
+        )
 
         # Parse code files
         code_files: list[CodeFile] = []
@@ -192,26 +192,35 @@ class CodeExtractor:
         """
         directory = Path(directory)
 
-        # Load dependency file from MinIO
-        dependency_paths: list[str] | None = None
-        if form_name:
-            dependency_paths = parse_dependency_file(form_name)
-            logger.info(
-                "Loaded dependency file from MinIO",
-                form_name=form_name,
-                paths_count=len(dependency_paths),
-            )
+        # Load dependency file from MinIO - REQUIRED
+        if not form_name:
+            error_msg = "form_name is required to load dependency file from MinIO"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
 
-        if dependency_paths:
-            code_files = self._process_files_by_dependencies(directory, dependency_paths)
-        else:
-            code_files = self._process_all_code_files(directory)
+        dependency_paths = parse_dependency_file(form_name)
+        if not dependency_paths:
+            # Dependency file is REQUIRED - throw error if not found
+            error_msg = (
+                f"Dependency file not found in MinIO for form '{form_name}'. "
+                f"Please create the file at: FORMS/{form_name.upper()}/FORM_FILE_DEPENDENCIES/{form_name.lower()}_dependencies.txt"
+            )
+            logger.error(error_msg)
+            raise FileNotFoundError(error_msg)
+
+        logger.info(
+            "Loaded dependency file from MinIO",
+            form_name=form_name,
+            paths_count=len(dependency_paths),
+        )
+
+        code_files = self._process_files_by_dependencies(directory, dependency_paths)
 
         logger.info(
             "Extracted code files from directory",
             directory=str(directory),
             total_files=len(code_files),
-            filtered=bool(dependency_paths),
+            dependency_count=len(dependency_paths),
         )
 
         return code_files
@@ -684,6 +693,29 @@ class CodeExtractor:
 
         return documents
 
+    def _is_business_logic_file(self, code_file: CodeFile) -> bool:
+        """Check if file is a business logic file that should have ALL methods extracted."""
+        path_lower = code_file.path.lower()
+        file_type = code_file.file_type.lower()
+
+        # Business logic file types and path patterns
+        business_keywords = [
+            "options",
+            "adapter",
+            "service",
+            "action",
+            "controller",
+            "form",
+            "handler",
+            "manager",
+            "processor",
+            "validator",
+        ]
+
+        return file_type in ["adapter", "service", "controller", "source"] or any(
+            keyword in path_lower for keyword in business_keywords
+        )
+
     def _create_class_definition_document(
         self, code_file: CodeFile, form_name: str
     ) -> Document | None:
@@ -713,8 +745,8 @@ class CodeExtractor:
 
         text_parts.append("")
         text_parts.append("## Full Class Code:")
-        # Include up to 8000 chars for better context
-        text_parts.append(code_file.content[:8000])
+        # Include up to 20000 chars for better context (increased from 8000)
+        text_parts.append(code_file.content[:20000])
 
         metadata = {
             "form_name": form_name,
@@ -736,44 +768,85 @@ class CodeExtractor:
         )
 
     def _create_method_documents(self, code_file: CodeFile, form_name: str) -> list[Document]:
-        """Create separate documents for important methods (business logic)."""
+        """Create separate documents for important methods (business logic).
+
+        For business logic files (Options, Adapter, Service, Controller, Action files),
+        ALL methods are extracted without limits to preserve complete business logic.
+        """
         documents = []
 
+        # Check if this is a business logic file - if so, extract ALL methods
+        is_business_file = self._is_business_logic_file(code_file)
+
         # Focus on methods that likely contain business logic
+        important_keywords = [
+            "save",
+            "update",
+            "delete",
+            "create",
+            "validate",
+            "check",
+            "does",
+            "using",
+            "get",
+            "set",
+            "action",
+            "process",
+            "handle",
+            "execute",
+            "run",
+            "init",
+            "load",
+            "fetch",
+            "find",
+            "search",
+            "calculate",
+            "compute",
+            "transform",
+            "convert",
+            "format",
+            "add",
+            "remove",
+            "insert",
+            "modify",
+            "apply",
+            "submit",
+        ]
+
         important_methods = [
             m
             for m in code_file.methods
-            if any(
-                keyword in m.lower()
-                for keyword in [
-                    "save",
-                    "update",
-                    "delete",
-                    "create",
-                    "validate",
-                    "check",
-                    "does",
-                    "using",
-                    "get",
-                    "set",
-                    "action",
-                ]
-            )
+            if any(keyword in m.lower() for keyword in important_keywords)
         ]
 
-        # If too many methods, prioritize the important ones
-        methods_to_process = (
-            important_methods[:10] if len(important_methods) > 10 else code_file.methods[:15]
-        )
+        # For business logic files: extract ALL methods (no limit)
+        # For other files: prioritize important methods with reasonable limit
+        if is_business_file:
+            # Extract ALL methods from business logic files
+            methods_to_process = code_file.methods
+            logger.debug(
+                f"Business logic file detected, extracting ALL {len(methods_to_process)} methods",
+                file=code_file.path,
+            )
+        else:
+            # For non-business files, use limits but increase them
+            methods_to_process = (
+                important_methods[:25] if len(important_methods) > 25 else code_file.methods[:30]
+            )
 
         for method_name in methods_to_process:
-            # Extract method content using regex
-            method_pattern = rf"(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)?{re.escape(method_name)}\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{{([^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)"
+            # Extract method content using improved regex for nested braces
+            method_pattern = rf"(?:public|private|protected)?\s*(?:static\s+)?(?:synchronized\s+)?(?:final\s+)?(?:\w+(?:<[^>]+>)?\s+)?{re.escape(method_name)}\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{{"
             match = re.search(method_pattern, code_file.content, re.MULTILINE | re.DOTALL)
 
             if match:
-                method_body = match.group(0)[:8000]  # Up to 8000 chars
-                line_num = code_file.content[: match.start()].count("\n") + 1
+                # Extract full method body by counting braces
+                start_pos = match.start()
+                method_body = self._extract_full_method_body(code_file.content, start_pos)
+
+                # Increased limit from 8000 to 15000 chars for better context
+                method_body = method_body[:15000]
+                line_num = code_file.content[:start_pos].count("\n") + 1
 
                 text_parts = [
                     f"File: {code_file.path}",
@@ -795,6 +868,7 @@ class CodeExtractor:
                     "line_number": line_num,
                     "doc_type": "business_logic",
                     "chunk_type": "method_implementation",
+                    "is_business_logic_file": is_business_file,
                 }
 
                 documents.append(
@@ -806,12 +880,53 @@ class CodeExtractor:
 
         return documents
 
+    def _extract_full_method_body(self, content: str, start_pos: int) -> str:
+        """Extract complete method body by counting braces for proper nesting."""
+        brace_count = 0
+        in_string = False
+        string_char = None
+        i = start_pos
+        method_started = False
+
+        while i < len(content):
+            char = content[i]
+
+            # Handle string literals
+            if char in "\"'":
+                if not in_string:
+                    in_string = True
+                    string_char = char
+                elif char == string_char and (i == 0 or content[i - 1] != "\\"):
+                    in_string = False
+                    string_char = None
+
+            # Count braces only outside strings
+            if not in_string:
+                if char == "{":
+                    brace_count += 1
+                    method_started = True
+                elif char == "}":
+                    brace_count -= 1
+                    if method_started and brace_count == 0:
+                        return content[start_pos : i + 1]
+
+            i += 1
+
+        # Fallback: return up to 15000 chars if brace matching fails
+        return content[start_pos : start_pos + 15000]
+
     def _create_comprehensive_document(self, code_file: CodeFile, form_name: str) -> Document:
-        """Create a comprehensive document for files that aren't DTOs/models."""
+        """Create a comprehensive document for files that aren't DTOs/models.
+
+        For business logic files, includes more content for better context.
+        """
+        is_business_file = self._is_business_logic_file(code_file)
+
         text_parts = [
             f"File: {code_file.path}",
             f"Language: {code_file.language}",
             f"Type: {code_file.file_type}",
+            f"Business Logic File: {is_business_file}",
             "",
         ]
 
@@ -819,15 +934,21 @@ class CodeExtractor:
             text_parts.append(f"Classes: {', '.join(code_file.classes)}")
 
         if code_file.methods:
-            text_parts.append(f"Methods: {', '.join(code_file.methods[:30])}")
+            # Include ALL methods for business logic files
+            methods_to_show = code_file.methods if is_business_file else code_file.methods[:50]
+            text_parts.append(
+                f"Methods ({len(code_file.methods)} total): {', '.join(methods_to_show)}"
+            )
 
         if code_file.fields:
             text_parts.append(f"Fields: {', '.join(code_file.fields)}")
 
         if code_file.imports:
-            text_parts.append(f"Imports: {', '.join(code_file.imports[:15])}")
+            text_parts.append(f"Imports: {', '.join(code_file.imports[:25])}")
 
-        text_parts.extend(["", "## Code:", code_file.content[:8000]])  # Increased from 1500 to 8000
+        # Increased content limit: 25000 for business files, 15000 for others
+        content_limit = 25000 if is_business_file else 15000
+        text_parts.extend(["", "## Code:", code_file.content[:content_limit]])
 
         metadata = {
             "form_name": form_name,
@@ -835,13 +956,14 @@ class CodeExtractor:
             "language": code_file.language,
             "file_type": code_file.file_type,
             "classes": code_file.classes,
-            "methods": code_file.methods[:30],
+            "methods": code_file.methods,  # Include ALL methods in metadata
             "fields": code_file.fields,
             "extends": code_file.extends,
             "implements": code_file.implements,
             "line_count": code_file.line_count,
             "doc_type": "code",
             "chunk_type": "comprehensive",
+            "is_business_logic_file": is_business_file,
         }
 
         return Document(

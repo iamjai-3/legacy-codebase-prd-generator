@@ -15,13 +15,14 @@ from src.vector_store.qdrant_manager import QdrantManager
 
 logger = get_logger(__name__)
 
-# Constants for content length limits - INCREASED for full business logic capture
+# Constants for content length limits - MAXIMIZED for complete business logic capture
 # These limits are per chunk - long files will be split into multiple chunks
-MAX_JAVA_SOURCE_CONTENT = 15000  # Main source files with business logic
-MAX_JAVA_CONTENT = 12000  # Other Java files
-MAX_SQL_CONTENT = 20000  # SQL files - no limit practically
-MAX_DEFAULT_CONTENT = 10000  # Other files
-MAX_FORM_CONTENT = 25000  # Form definitions - store full content
+MAX_JAVA_SOURCE_CONTENT = 30000  # Main source files with business logic - INCREASED
+MAX_JAVA_CONTENT = 25000  # Other Java files - INCREASED
+MAX_SQL_CONTENT = 30000  # SQL files - store complete schemas
+MAX_DEFAULT_CONTENT = 20000  # Other files - INCREASED
+MAX_FORM_CONTENT = 35000  # Form definitions - store full content
+MAX_METHOD_CONTENT = 20000  # Individual method content - for complete method bodies
 
 # Default values
 DEFAULT_CONTENT_TYPE = "image/png"
@@ -223,16 +224,21 @@ Classes: {", ".join(file_info.get("classes", []))}
             doc_type="code",
         )
 
-    # Extract and store individual methods/functions
+    # Extract and store individual methods/functions - ALL of them for business logic
     methods = _extract_methods_from_content(content, language)
+    logger.info(f"Extracting {len(methods)} methods from {path}")
+
     for method_name, method_content in methods:
+        # Store complete method body (up to MAX_METHOD_CONTENT)
+        method_content_trimmed = method_content[:MAX_METHOD_CONTENT]
         method_text = f"""
 METHOD: {method_name}
 FILE: {path}
 Language: {language}
+Classes: {", ".join(file_info.get("classes", []))}
 
 FULL METHOD IMPLEMENTATION:
-{method_content}
+{method_content_trimmed}
 """
         total_vectors += qdrant.add_text(
             form_name=form_name,
@@ -241,6 +247,7 @@ FULL METHOD IMPLEMENTATION:
                 **file_info,
                 "chunk_type": "method_implementation",
                 "method_name": method_name,
+                "method_length": len(method_content),
             },
             doc_type="business_logic",
         )
@@ -302,37 +309,59 @@ def _extract_file_header(content: str, language: str) -> str:
 
 
 def _extract_methods_from_content(content: str, language: str) -> list[tuple[str, str]]:
-    """Extract individual methods/functions from code content."""
+    """Extract ALL individual methods/functions from code content.
+
+    Extracts complete method bodies with proper brace matching to ensure
+    no business logic is truncated.
+    """
     import re
 
     methods = []
 
     if language == "java":
-        # Match Java methods
-        method_pattern = r"((?:public|private|protected)\s+(?:static\s+)?(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{)"
+        # Match Java methods - improved pattern for better matching
+        method_pattern = r"((?:public|private|protected)\s+(?:static\s+)?(?:synchronized\s+)?(?:final\s+)?(?:\w+(?:<[^>]+>)?\s+)+(\w+)\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{)"
         matches = list(re.finditer(method_pattern, content))
 
         for i, match in enumerate(matches):
             method_name = match.group(2)
             start = match.start()
 
-            # Find method end by counting braces
+            # Find method end by counting braces - handle nested braces and strings
             brace_count = 0
             end = start
             in_method = False
+            in_string = False
+            string_char = None
 
-            for j in range(start, len(content)):
-                if content[j] == "{":
-                    brace_count += 1
-                    in_method = True
-                elif content[j] == "}":
-                    brace_count -= 1
-                    if in_method and brace_count == 0:
-                        end = j + 1
-                        break
+            j = start
+            while j < len(content):
+                char = content[j]
+
+                # Handle string literals to avoid counting braces inside strings
+                if char in "\"'":
+                    if not in_string:
+                        in_string = True
+                        string_char = char
+                    elif char == string_char and (j == 0 or content[j - 1] != "\\"):
+                        in_string = False
+                        string_char = None
+
+                # Only count braces outside of strings
+                if not in_string:
+                    if char == "{":
+                        brace_count += 1
+                        in_method = True
+                    elif char == "}":
+                        brace_count -= 1
+                        if in_method and brace_count == 0:
+                            end = j + 1
+                            break
+                j += 1
 
             method_content = content[start:end]
-            if len(method_content) > 100:  # Only store substantial methods
+            # Store ALL methods with any code content (lowered threshold from 100 to 50)
+            if len(method_content) > 50:
                 methods.append((method_name, method_content))
 
     return methods

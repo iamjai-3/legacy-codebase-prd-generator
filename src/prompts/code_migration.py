@@ -161,11 +161,159 @@ Your task is to analyze the knowledge base for "{form_name}" and generate:
 1. Complete .NET backend solution with ASP.NET Core, Entity Framework, and PostgreSQL
 2. Complete React frontend application with TypeScript, TanStack Query, and shadcn/ui
 
-You must:
-- Extract all business logic, data models, and API specifications from the knowledge base
+CRITICAL REQUIREMENTS:
+- Extract ALL business logic, data models, and API specifications from the knowledge base
+- The generated code must match 100% with the legacy codebase functionality
 - Generate production-ready code following best practices
 - Ensure proper error handling and validation
 - Create complete, runnable applications
-- Follow the exact format specified in the conversion prompts
 
-The generated code should be migration-ready and maintain all functionality from the legacy system."""
+REQUIRED .NET BACKEND STRUCTURE:
+```
+[FormName].API/
+├── Controllers/           <- REQUIRED: One controller per entity
+├── Program.cs            <- REQUIRED: Full DI configuration
+└── appsettings.json
+
+[FormName].Business/
+├── DTOs/                 <- REQUIRED: Read, Create, Update DTOs per entity
+├── Services/
+│   ├── Interfaces/       <- REQUIRED: I[Entity]Service interfaces
+│   └── Implementations/  <- REQUIRED: [Entity]Service with ALL business logic
+├── Validators/           <- REQUIRED: Validation logic
+└── Mappings/             <- AutoMapper profile
+
+[FormName].Data/
+├── Entities/             <- REQUIRED: ALL entities with ALL fields
+├── Configurations/       <- REQUIRED: EF Core configurations
+├── Context/              <- REQUIRED: DbContext
+└── Repositories/         <- REQUIRED: Repository pattern
+
+[FormName].Common/
+├── Exceptions/           <- Custom exceptions
+└── Models/               <- ApiResponse, PagedResult
+```
+
+REQUIRED REACT FRONTEND STRUCTURE:
+```
+src/
+├── types/                <- REQUIRED: TypeScript interfaces for ALL entities
+├── schemas/              <- REQUIRED: Zod schemas for validation
+├── hooks/api/            <- REQUIRED: TanStack Query hooks for ALL endpoints
+├── services/api/         <- REQUIRED: API service functions
+├── components/
+│   ├── [feature]/        <- REQUIRED: Components for EACH screen from PRD
+│   │   ├── [Screen]Form.tsx
+│   │   ├── [Screen]Table.tsx
+│   │   └── index.tsx
+│   └── common/           <- Shared components (dialogs, etc.)
+├── pages/                <- Route pages
+└── App.tsx               <- Main app with routing
+```
+
+The generated code MUST include ALL:
+- Entities (with ALL fields from legacy code)
+- Services (with ALL business logic methods)
+- Controllers (with ALL endpoints from requirements)
+- Frontend screens (ALL screens from PRD)
+- Validation rules (ALL validations from legacy code)"""
+
+    @staticmethod
+    def get_backend_folder_structure(project_name: str = "Management") -> dict[str, list[str]]:
+        """Get the required backend folder structure for validation."""
+        return {
+            f"{project_name}.API": [
+                "Controllers/",
+                "Program.cs",
+                "appsettings.json",
+            ],
+            f"{project_name}.Business": [
+                "DTOs/",
+                "Services/Interfaces/",
+                "Services/Implementations/",
+                "Validators/",
+                "Mappings/",
+            ],
+            f"{project_name}.Data": [
+                "Entities/",
+                "Configurations/",
+                "Context/",
+                "Repositories/Interfaces/",
+                "Repositories/Implementations/",
+            ],
+            f"{project_name}.Common": [
+                "Exceptions/",
+                "Models/",
+            ],
+        }
+
+    @staticmethod
+    def get_frontend_folder_structure() -> dict[str, list[str]]:
+        """Get the required frontend folder structure for validation."""
+        return {
+            "src": [
+                "types/",
+                "schemas/",
+                "hooks/api/",
+                "services/api/",
+                "components/",
+                "pages/",
+                "App.tsx",
+            ],
+        }
+
+    @staticmethod
+    def get_required_backend_files(
+        entities: list[str], project_name: str = "Management"
+    ) -> list[str]:
+        """Get list of required backend files based on entities."""
+        required_files = [
+            f"{project_name}.API/Program.cs",
+            f"{project_name}.API/appsettings.json",
+            f"{project_name}.Data/Context/{project_name}DbContext.cs",
+            f"{project_name}.Business/Mappings/MappingProfile.cs",
+            f"{project_name}.Common/Exceptions/NotFoundException.cs",
+            f"{project_name}.Common/Models/ApiResponse.cs",
+            f"{project_name}.Common/Models/PagedResult.cs",
+        ]
+
+        for entity in entities:
+            required_files.extend(
+                [
+                    f"{project_name}.Data/Entities/{entity}.cs",
+                    f"{project_name}.Data/Configurations/{entity}Configuration.cs",
+                    f"{project_name}.Data/Repositories/Interfaces/I{entity}Repository.cs",
+                    f"{project_name}.Data/Repositories/Implementations/{entity}Repository.cs",
+                    f"{project_name}.Business/DTOs/{entity}/{entity}ReadDto.cs",
+                    f"{project_name}.Business/DTOs/{entity}/{entity}CreateDto.cs",
+                    f"{project_name}.Business/DTOs/{entity}/{entity}UpdateDto.cs",
+                    f"{project_name}.Business/Services/Interfaces/I{entity}Service.cs",
+                    f"{project_name}.Business/Services/Implementations/{entity}Service.cs",
+                    f"{project_name}.Business/Validators/{entity}Validator.cs",
+                    f"{project_name}.API/Controllers/{entity}Controller.cs",
+                ]
+            )
+
+        return required_files
+
+    @staticmethod
+    def get_required_frontend_files(screens: list[str]) -> list[str]:
+        """Get list of required frontend files based on screens."""
+        required_files = [
+            "src/types/index.ts",
+            "src/schemas/index.ts",
+            "src/hooks/api/index.ts",
+            "src/lib/api.ts",
+            "src/App.tsx",
+        ]
+
+        for screen in screens:
+            screen_folder = screen.replace(" ", "")
+            required_files.extend(
+                [
+                    f"src/components/{screen_folder}/index.tsx",
+                    f"src/components/{screen_folder}/{screen_folder}Form.tsx",
+                ]
+            )
+
+        return required_files
