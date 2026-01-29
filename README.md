@@ -292,6 +292,69 @@ PRD_Agent/
 └── pyproject.toml             # Project config
 ```
 
+## 📂 MinIO Folder Structure
+
+The system uses MinIO for storing all input data. Default bucket: `metadata`
+
+```
+metadata/
+├── DB_PRD/                              # Database documentation
+│   ├── schema.md
+│   └── table_mappings.md
+│
+├── EXPORT_CODEBASE_PRD/                 # Migration prompt templates
+│   ├── BE/dotnet_backend_conversion_prompt.txt
+│   └── FE/react_frontend_conversion_prompt.txt
+│
+├── FORMS/{FORM_NAME}/                   # Form-specific data (e.g., LE11)
+│   ├── FORM_DOCS/                       # Markdown documentation
+│   ├── FORM_FILE_DEPENDENCIES/          # Code file dependencies
+│   └── UI_SCREENSHOTS/                  # UI screenshots
+│
+└── LEGACY_CODEBASE/                     # Legacy source code ZIP
+    └── oases-master.zip
+```
+
+## 🧠 Knowledge Base
+
+The system creates a unified vector knowledge base from multiple sources:
+
+| Source      | Content                               | Doc Type                 |
+| ----------- | ------------------------------------- | ------------------------ |
+| Legacy Code | Java classes, methods, business logic | `code`, `business_logic` |
+| Form Docs   | Requirements, specifications          | `existing_prd`           |
+| DB Schema   | Tables, relationships, mappings       | `database`               |
+| Screenshots | UI analysis results                   | `screenshot_analysis`    |
+
+### Searching the Knowledge Base
+
+```bash
+# Search all content
+prd-agent search -f le11 -q "validation rules"
+
+# Search specific doc types
+prd-agent search -f le11 -q "save method" --type code
+prd-agent search -f le11 -q "field mapping" --type existing_prd
+prd-agent search -f le11 -q "table schema" --type database
+```
+
+## 🔄 Code Migration
+
+After generating the PRD and knowledge base, migrate to modern frameworks:
+
+```bash
+# Generate PRD and build knowledge base
+prd-agent generate -f le11 -o ./output
+
+# Migrate to .NET + React
+prd-agent migrate-code -f le11 -o ./output/migratedCode
+```
+
+### Migration Output
+
+- **Backend**: ASP.NET Core with Entity Framework, PostgreSQL
+- **Frontend**: React with TypeScript, TanStack Query, shadcn/ui
+
 ## ⚙️ Configuration
 
 ### Environment Variables
@@ -306,6 +369,7 @@ PRD_Agent/
 | `TEMPORAL_HOST`          | Temporal host     | `localhost`              |
 | `TEMPORAL_PORT`          | Temporal port     | `7233`                   |
 | `MINIO_ENDPOINT`         | Minio endpoint    | `localhost:9000`         |
+| `MINIO_BUCKET`           | MinIO bucket name | `metadata`               |
 | `JIRA_URL`               | Jira instance URL | -                        |
 | `JIRA_API_TOKEN`         | Jira API token    | -                        |
 
@@ -314,30 +378,63 @@ PRD_Agent/
 The Temporal workflow orchestrates the entire process:
 
 ```
-Phase 1: Data Extraction (Parallel)
-  ├── Extract code from ZIP/directory
-  ├── Fetch screenshots from Minio
-  └── Query Jira for documentation
+Phase 1: Data Extraction (from MinIO)
+  ├── Extract legacy code from LEGACY_CODEBASE/*.zip
+  ├── Fetch screenshots from FORMS/{FORM}/UI_SCREENSHOTS/
+  ├── Load form docs from FORMS/{FORM}/FORM_DOCS/
+  └── Load DB docs from DB_PRD/
 
-Phase 2: Vector Storage
-  └── Create embeddings and store in Qdrant
+Phase 2: Vector Storage (Knowledge Base Creation)
+  ├── Store code with FULL business logic (methods, classes)
+  ├── Store form documentation (requirements, specs)
+  ├── Store database schemas and mappings
+  └── Store screenshot analysis results
 
-Phase 3: Initial Analysis (Parallel)
-  ├── Screenshot analysis
-  └── Jira analysis
+Phase 3: Initial Analysis
+  └── Screenshot analysis with GPT-4 Vision
 
 Phase 4: Requirements Generation
-  └── Generate functional/non-functional requirements
+  └── Generate requirements from knowledge base
 
-Phase 5: Flow & Risk Analysis (Parallel)
-  ├── User flow documentation
-  └── Risk assessment
+Phase 5: User Flow Analysis
+  └── Document user journeys and flows
 
-Phase 6: PRD Aggregation
-  └── Combine all insights into PRD
+Phase 6: Database Analysis
+  └── Analyze form-specific table mappings
 
-Phase 7: Output
-  └── Save PRD markdown and metadata
+Phase 7: PRD Aggregation
+  └── Combine all insights into comprehensive PRD
+
+Phase 8: Output
+  └── Save PRD markdown to output directory
+```
+
+### Code Migration Workflow
+
+After PRD generation, the migration workflow:
+
+```
+1. Retrieve Knowledge Base Context
+   ├── Business logic & methods (doc_type: business_logic)
+   ├── Data models & entities (doc_type: code)
+   ├── Form documentation (doc_type: existing_prd)
+   ├── Database schemas (doc_type: database)
+   └── UI context (doc_type: screenshot_analysis)
+
+2. Generate Backend Specification
+   └── JSON spec with entities, APIs, validations
+
+3. Generate .NET Backend Code
+   └── Using EXPORT_CODEBASE_PRD/BE/ template
+
+4. Generate Frontend Specification
+   └── JSON spec with forms, components, navigation
+
+5. Generate React Frontend Code
+   └── Using EXPORT_CODEBASE_PRD/FE/ template
+
+6. Package Output
+   └── Create ZIP archives for backend and frontend
 ```
 
 ## 📊 Output

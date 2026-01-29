@@ -101,6 +101,7 @@ prd-agent generate \
 ```
 
 **Options:**
+
 - `--form-name, -f` (required): Form name (e.g., le11, le07)
 - `--zip-path, -z` (optional): Path to code ZIP file (if not provided, loads from MinIO `LEGACY_CODEBASE/`)
 - `--code-dir, -c` (optional): Path to code directory (if not provided, loads from MinIO `LEGACY_CODEBASE/`)
@@ -109,6 +110,7 @@ prd-agent generate \
 - `--jira-project, -j` (optional): Jira project key
 
 **What happens automatically:**
+
 - Dependencies loaded from MinIO: `FORMS/{FORM_NAME}/FORM_FILE_DEPENDENCIES/{FORM_NAME}_dependencies.txt`
 - Database analysis runs automatically
 - Screenshots analyzed from MinIO: `FORMS/{FORM_NAME}/UI_SCREENSHOTS/`
@@ -124,6 +126,58 @@ prd-agent generate \
 prd-agent migrate-code \
   --form-name le11 \
   --output ./output/migratedCode
+```
+
+### Regenerate Knowledge Base Before Migration
+
+If migration output is missing business logic, regenerate the knowledge base:
+
+```bash
+prd-agent generate \
+  --form-name le11 \
+  --recreate-vectors \
+  --output ./output
+```
+
+Then run migration:
+
+```bash
+prd-agent migrate-code \
+  --form-name le11 \
+  --output ./output/migratedCode
+```
+
+### Knowledge Base Components
+
+The migration uses a unified knowledge base built from:
+
+| Source       | Location                               | Content                                        | Doc Type                 |
+| ------------ | -------------------------------------- | ---------------------------------------------- | ------------------------ |
+| Legacy Code  | `LEGACY_CODEBASE/*.zip`                | Full Java source code, methods, business logic | `code`, `business_logic` |
+| Form Docs    | `FORMS/{FORM}/FORM_DOCS/`              | Requirements, specifications, field mappings   | `existing_prd`           |
+| DB Schema    | `DB_PRD/`                              | Database schemas, table relationships          | `database`               |
+| Screenshots  | `FORMS/{FORM}/UI_SCREENSHOTS/`         | UI analysis results                            | `screenshot_analysis`    |
+| Dependencies | `FORMS/{FORM}/FORM_FILE_DEPENDENCIES/` | File filtering for extraction                  | -                        |
+
+### Migration Output Structure
+
+```
+output/migratedCode/
+├── {form_name}_backend.zip
+│   └── FleetManagement/
+│       ├── FleetManagement.API/        # ASP.NET Core API
+│       ├── FleetManagement.Business/   # Business logic & services
+│       ├── FleetManagement.Data/       # EF Core entities & repos
+│       └── FleetManagement.Common/     # Shared models & utils
+│
+└── {form_name}_frontend.zip
+    └── fleet-management/
+        ├── src/
+        │   ├── components/             # React components
+        │   ├── pages/                  # Page components
+        │   ├── services/               # API service layer
+        │   └── types/                  # TypeScript types
+        └── package.json
 ```
 
 **Note:** Run `generate` first to populate the knowledge base, then run `migrate-code`.
@@ -165,6 +219,7 @@ prd-agent delete-collection --form-name le11 --yes
 ```
 
 **Options:**
+
 - `--form-name, -f` (required): Form name to delete
 - `--yes, -y`: Skip confirmation prompt
 - `--delete-minio` (default: true): Also delete MinIO form data
@@ -172,6 +227,7 @@ prd-agent delete-collection --form-name le11 --yes
 - `--bucket, -b`: MinIO bucket name (defaults to configured bucket)
 
 **What gets deleted:**
+
 - Qdrant vector collection: `prd_agent_{form_name}`
 - MinIO form data: `FORMS/{FORM_NAME}/*` (if `--delete-minio` is used)
 
@@ -194,18 +250,80 @@ prd-agent create-form-folders LE11
 ### Custom Bucket
 
 ```bash
-prd-agent create-minio-folders --bucket metadatas
-prd-agent create-form-folders LE11 --bucket metadatas
+prd-agent create-minio-folders --bucket metadata
+prd-agent create-form-folders LE11 --bucket metadata
 ```
 
-**Folder Structure:**
-- `FORMS/` - Parent folder for all forms
-- `FORMS/{FORM_NAME}/FORM_DOCS/` - Form documentation files
-- `FORMS/{FORM_NAME}/FORM_FILE_DEPENDENCIES/` - Dependency files
-- `FORMS/{FORM_NAME}/UI_SCREENSHOTS/` - UI screenshots
-- `DB_PRD/` - Database PRD files
-- `EXPORT_CODEBASE_PRD/` - Export codebase PRD files
-- `LEGACY_CODEBASE/` - Legacy codebase ZIP files
+### MinIO Folder Structure
+
+**Bucket Name:** `metadata` (configurable via `MINIO_BUCKET` env var)
+
+```
+metadata/
+├── DB_PRD/                              # Database documentation (global)
+│   ├── schema.md                        # Database schema docs
+│   ├── table_mappings.md                # Table mapping documentation
+│   └── relationships.sql                # SQL relationship definitions
+│
+├── EXPORT_CODEBASE_PRD/                 # Code migration prompt templates
+│   ├── BE/                              # Backend templates
+│   │   └── dotnet_backend_conversion_prompt.txt
+│   └── FE/                              # Frontend templates
+│       └── react_frontend_conversion_prompt.txt
+│
+├── FORMS/                               # Form-specific data
+│   └── {FORM_NAME}/                     # e.g., LE01, LE07, LE11 (UPPERCASE)
+│       ├── FORM_DOCS/                   # Form documentation (markdown)
+│       │   ├── {form_name}_Description.md
+│       │   ├── {form_name}_Requirements.md
+│       │   └── {form_name}_SourceTables.md
+│       │
+│       ├── FORM_FILE_DEPENDENCIES/      # Code dependency mappings
+│       │   └── {form_name}_dependencies.txt  # (lowercase)
+│       │
+│       └── UI_SCREENSHOTS/              # Form UI screenshots
+│           ├── main_screen.png
+│           ├── form_screen.png
+│           └── list_screen.png
+│
+└── LEGACY_CODEBASE/                     # Legacy code archives
+    └── oases-master.zip                 # Source code ZIP file(s)
+```
+
+### Example for Form LE11
+
+```
+metadata/
+├── DB_PRD/
+│   └── database_schema.md
+├── EXPORT_CODEBASE_PRD/
+│   ├── BE/dotnet_backend_conversion_prompt.txt
+│   └── FE/react_frontend_conversion_prompt.txt
+├── FORMS/
+│   └── LE11/
+│       ├── FORM_DOCS/
+│       │   ├── le11_Description.md
+│       │   └── le11_SourceTables.md
+│       ├── FORM_FILE_DEPENDENCIES/
+│       │   └── le11_dependencies.txt
+│       └── UI_SCREENSHOTS/
+│           ├── le11_main.png
+│           └── le11_form.png
+└── LEGACY_CODEBASE/
+    └── oases-master.zip
+```
+
+### What Each Folder Contains
+
+| Folder                                 | Purpose                                | Used By                         |
+| -------------------------------------- | -------------------------------------- | ------------------------------- |
+| `DB_PRD/`                              | Database schema docs, table mappings   | Knowledge base for DB context   |
+| `EXPORT_CODEBASE_PRD/BE/`              | .NET backend conversion prompt         | Code migration agent            |
+| `EXPORT_CODEBASE_PRD/FE/`              | React frontend conversion prompt       | Code migration agent            |
+| `FORMS/{FORM}/FORM_DOCS/`              | Form requirements, business logic docs | Knowledge base for form context |
+| `FORMS/{FORM}/FORM_FILE_DEPENDENCIES/` | List of code files for the form        | Code extraction filtering       |
+| `FORMS/{FORM}/UI_SCREENSHOTS/`         | UI screenshots                         | Screenshot analysis agent       |
+| `LEGACY_CODEBASE/`                     | Legacy source code ZIP                 | Code extraction & analysis      |
 
 **Note:** Folders are automatically created when running `generate` if they don't exist.
 
@@ -234,6 +352,7 @@ prd-agent delete-bucket --bucket metadatas --yes
 ```
 
 **Options:**
+
 - `--bucket, -b`: Bucket name (defaults to configured bucket)
 - `--yes, -y`: Skip confirmation prompt
 - `--force` (default: true): Delete all objects before deleting bucket

@@ -20,6 +20,7 @@ with workflow.unsafe.imports_passed_through():
         analyze_screenshots_activity,
         analyze_user_flows_activity,
         extract_code_activity,
+        extract_db_prd_activity,
         extract_existing_prd_activity,
         extract_screenshots_activity,
         generate_requirements_activity,
@@ -226,7 +227,7 @@ class PRDGenerationWorkflow:
     async def _extract_data(
         self, input: PRDGenerationInput, opts: dict[str, Any]
     ) -> dict[str, dict[str, Any]]:
-        """Phase 1: Extract data from all sources including existing PRDs."""
+        """Phase 1: Extract data from all sources including existing PRDs and DB_PRD."""
         workflow.logger.info("Phase 1: Extracting data from all sources")
 
         # Code extraction - always run (will use MinIO if no local path provided)
@@ -256,16 +257,25 @@ class PRDGenerationWorkflow:
             **opts,
         )
 
+        # Extract DB_PRD documents from MinIO (database schemas, mappings, relationships)
+        db_prd_data = await workflow.execute_activity(
+            extract_db_prd_activity,
+            args=[input.form_name],
+            **opts,
+        )
+
         workflow.logger.info(
             f"Extraction complete - Code: {code_data.get('file_count', 0)}, "
             f"Screenshots: {screenshot_data.get('screenshot_count', 0)}, "
-            f"Existing PRD docs: {existing_prd_data.get('document_count', 0)}"
+            f"Existing PRD docs: {existing_prd_data.get('document_count', 0)}, "
+            f"DB_PRD docs: {db_prd_data.get('document_count', 0)}"
         )
 
         return {
             "code": code_data,
             "screenshots": screenshot_data,
             "existing_prd": existing_prd_data,
+            "db_prd": db_prd_data,
         }
 
     async def _store_vectors(
@@ -288,6 +298,7 @@ class PRDGenerationWorkflow:
                 extraction["code"].get(
                     "extract_dir"
                 ),  # Pass extract directory to read file content
+                extraction.get("db_prd"),  # Include DB_PRD documents
             ],
             **opts,
         )

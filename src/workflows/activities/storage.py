@@ -15,10 +15,13 @@ from src.vector_store.qdrant_manager import QdrantManager
 
 logger = get_logger(__name__)
 
-# Constants for content length limits
-MAX_JAVA_SOURCE_CONTENT = 8000
-MAX_JAVA_CONTENT = 4000
-MAX_DEFAULT_CONTENT = 3000
+# Constants for content length limits - INCREASED for full business logic capture
+# These limits are per chunk - long files will be split into multiple chunks
+MAX_JAVA_SOURCE_CONTENT = 15000  # Main source files with business logic
+MAX_JAVA_CONTENT = 12000  # Other Java files
+MAX_SQL_CONTENT = 20000  # SQL files - no limit practically
+MAX_DEFAULT_CONTENT = 10000  # Other files
+MAX_FORM_CONTENT = 25000  # Form definitions - store full content
 
 # Default values
 DEFAULT_CONTENT_TYPE = "image/png"
@@ -33,12 +36,16 @@ async def store_vectors_activity(
     existing_prd_data: dict[str, Any] | None = None,
     recreate_collection: bool = False,
     extract_dir: str | None = None,
+    db_prd_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Store all extracted data as vectors in Qdrant.
 
     Creates a unified knowledge base for migration purposes containing:
-    - Legacy code, screenshots, and existing PRD documents.
+    - Legacy code (business logic, data models, API specs)
+    - Screenshots (UI context)
+    - Existing PRD documents (form docs, requirements)
+    - DB_PRD documents (database schemas, table relationships, data mappings)
     """
     logger.info("Starting vector storage", form_name=form_name)
 
@@ -46,9 +53,22 @@ async def store_vectors_activity(
     collection_name = qdrant.create_collection(form_name=form_name, recreate=recreate_collection)
     total_vectors = 0
 
-    total_vectors += _store_code_vectors(qdrant, form_name, code_data, extract_dir)
-    total_vectors += _store_screenshot_vectors(qdrant, form_name, screenshot_data)
-    total_vectors += _store_prd_vectors(qdrant, form_name, existing_prd_data)
+    # Store all data sources in the unified knowledge base
+    code_vectors = _store_code_vectors(qdrant, form_name, code_data, extract_dir)
+    total_vectors += code_vectors
+    logger.info(f"Stored {code_vectors} code vectors")
+
+    screenshot_vectors = _store_screenshot_vectors(qdrant, form_name, screenshot_data)
+    total_vectors += screenshot_vectors
+    logger.info(f"Stored {screenshot_vectors} screenshot vectors")
+
+    prd_vectors = _store_prd_vectors(qdrant, form_name, existing_prd_data)
+    total_vectors += prd_vectors
+    logger.info(f"Stored {prd_vectors} existing PRD vectors")
+
+    db_prd_vectors = _store_db_prd_vectors(qdrant, form_name, db_prd_data)
+    total_vectors += db_prd_vectors
+    logger.info(f"Stored {db_prd_vectors} DB_PRD vectors")
 
     stats = qdrant.get_collection_stats(form_name)
 
@@ -56,6 +76,12 @@ async def store_vectors_activity(
         "success": True,
         "collection_name": collection_name,
         "total_vectors_added": total_vectors,
+        "vectors_breakdown": {
+            "code": code_vectors,
+            "screenshots": screenshot_vectors,
+            "existing_prd": prd_vectors,
+            "db_prd": db_prd_vectors,
+        },
         "collection_stats": stats,
     }
 
@@ -125,21 +151,191 @@ def _store_single_code_file(
     file_info: dict[str, Any],
     file_path: Path,
 ) -> int:
-    """Store a single code file in the vector store."""
+    """
+    Store a single code file in the vector store.
+
+    For large files with business logic, creates multiple chunks to ensure
+    complete coverage of all methods and logic.
+    """
     try:
         content = read_file_content(file_path)
         file_info_with_content = {**file_info, "content": content}
-        formatted_content = _format_code_for_vector(file_info_with_content)
+        total_vectors = 0
 
-        return qdrant.add_text(
-            form_name=form_name,
-            text=formatted_content,
-            metadata=file_info,
-            doc_type="code",
+        # Determine if this is a key business logic file
+        path_lower = file_info.get("path", "").lower()
+        is_business_logic_file = any(
+            keyword in path_lower
+            for keyword in ["options", "adapter", "service", "action", "controller", "form"]
         )
+
+        # For business logic files, store full content with chunking
+        if is_business_logic_file and len(content) > MAX_JAVA_SOURCE_CONTENT:
+            total_vectors += _store_large_file_in_chunks(
+                qdrant, form_name, file_info_with_content, content
+            )
+        else:
+            # Standard storage for smaller files
+            formatted_content = _format_code_for_vector(file_info_with_content)
+            total_vectors += qdrant.add_text(
+                form_name=form_name,
+                text=formatted_content,
+                metadata=file_info,
+                doc_type="code",
+            )
+
+        return total_vectors
     except OSError as e:
         logger.warning(f"Failed to read/store file {file_info.get('path', '')}: {e}")
         return 0
+
+
+def _store_large_file_in_chunks(
+    qdrant: QdrantManager,
+    form_name: str,
+    file_info: dict[str, Any],
+    content: str,
+) -> int:
+    """
+    Store a large file in multiple chunks to preserve full business logic.
+
+    Splits by methods/functions to keep logical units together.
+    """
+    total_vectors = 0
+    path = file_info.get("path", "")
+    language = file_info.get("language", "")
+
+    # First, store the file header/class definition
+    header_content = _extract_file_header(content, language)
+    if header_content:
+        header_text = f"""
+FILE HEADER: {path}
+Language: {language}
+Type: {file_info.get("file_type", "")}
+Classes: {", ".join(file_info.get("classes", []))}
+
+{header_content}
+"""
+        total_vectors += qdrant.add_text(
+            form_name=form_name,
+            text=header_text,
+            metadata={**file_info, "chunk_type": "file_header"},
+            doc_type="code",
+        )
+
+    # Extract and store individual methods/functions
+    methods = _extract_methods_from_content(content, language)
+    for method_name, method_content in methods:
+        method_text = f"""
+METHOD: {method_name}
+FILE: {path}
+Language: {language}
+
+FULL METHOD IMPLEMENTATION:
+{method_content}
+"""
+        total_vectors += qdrant.add_text(
+            form_name=form_name,
+            text=method_text,
+            metadata={
+                **file_info,
+                "chunk_type": "method_implementation",
+                "method_name": method_name,
+            },
+            doc_type="business_logic",
+        )
+
+    # Also store the full file in larger chunks for context
+    chunk_size = MAX_JAVA_SOURCE_CONTENT
+    for i in range(0, len(content), chunk_size):
+        chunk = content[i : i + chunk_size]
+        chunk_num = i // chunk_size + 1
+
+        chunk_text = f"""
+FILE CONTENT (Part {chunk_num}): {path}
+Language: {language}
+
+{chunk}
+"""
+        total_vectors += qdrant.add_text(
+            form_name=form_name,
+            text=chunk_text,
+            metadata={
+                **file_info,
+                "chunk_type": "file_content",
+                "chunk_number": chunk_num,
+            },
+            doc_type="code",
+        )
+
+    logger.debug(f"Stored large file {path} in multiple chunks: {total_vectors} vectors")
+    return total_vectors
+
+
+def _extract_file_header(content: str, language: str) -> str:
+    """Extract file header (imports, class declaration, fields)."""
+    lines = content.split("\n")
+    header_lines = []
+    in_class = False
+    brace_count = 0
+
+    for line in lines:
+        header_lines.append(line)
+
+        if language == "java":
+            if "class " in line or "interface " in line:
+                in_class = True
+            if in_class:
+                brace_count += line.count("{") - line.count("}")
+                # Stop after class fields (before first method)
+                if brace_count > 0 and (
+                    "public " in line or "private " in line or "protected " in line
+                ):
+                    if "(" in line and ")" in line:  # This is a method
+                        break
+
+        # Limit header size
+        if len("\n".join(header_lines)) > 3000:
+            break
+
+    return "\n".join(header_lines)
+
+
+def _extract_methods_from_content(content: str, language: str) -> list[tuple[str, str]]:
+    """Extract individual methods/functions from code content."""
+    import re
+
+    methods = []
+
+    if language == "java":
+        # Match Java methods
+        method_pattern = r"((?:public|private|protected)\s+(?:static\s+)?(?:\w+\s+)+(\w+)\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{)"
+        matches = list(re.finditer(method_pattern, content))
+
+        for i, match in enumerate(matches):
+            method_name = match.group(2)
+            start = match.start()
+
+            # Find method end by counting braces
+            brace_count = 0
+            end = start
+            in_method = False
+
+            for j in range(start, len(content)):
+                if content[j] == "{":
+                    brace_count += 1
+                    in_method = True
+                elif content[j] == "}":
+                    brace_count -= 1
+                    if in_method and brace_count == 0:
+                        end = j + 1
+                        break
+
+            method_content = content[start:end]
+            if len(method_content) > 100:  # Only store substantial methods
+                methods.append((method_name, method_content))
+
+    return methods
 
 
 def _store_code_metadata_only(
@@ -272,6 +468,47 @@ It shows: {description}
     return count
 
 
+def _store_db_prd_vectors(
+    qdrant: QdrantManager,
+    form_name: str,
+    db_prd_data: dict[str, Any] | None,
+) -> int:
+    """Store DB_PRD document vectors in Qdrant."""
+    if not db_prd_data or not db_prd_data.get("success"):
+        return 0
+
+    count = 0
+    for doc in db_prd_data.get("documents", []):
+        content = f"""
+DATABASE DOCUMENTATION: {doc.get("filename", "")}
+Type: {doc.get("document_type", "")}
+Title: {doc.get("title", "")}
+
+CONTENT:
+{doc.get("content", "")}
+
+This document contains database schema information, table relationships, 
+and data mappings critical for code migration.
+"""
+        metadata = {
+            "filename": doc.get("filename", ""),
+            "document_type": doc.get("document_type", ""),
+            "title": doc.get("title", ""),
+            "word_count": doc.get("word_count", 0),
+            "form_name": form_name,
+            "source": "db_prd",
+        }
+        count += qdrant.add_text(
+            form_name=form_name,
+            text=content,
+            metadata=metadata,
+            doc_type="database",
+        )
+
+    logger.info(f"Stored {count} DB_PRD document vectors")
+    return count
+
+
 def _format_code_for_vector(file_info: dict[str, Any]) -> str:
     """Format code file info for vectorization with content for searchability."""
     path = file_info.get("path", "")
@@ -297,18 +534,26 @@ def _format_code_for_vector(file_info: dict[str, Any]) -> str:
 
 
 def _get_content_section(language: str, file_type: str, path: str, content: str) -> str:
-    """Get the appropriate content section based on file type."""
+    """Get the appropriate content section based on file type with generous limits."""
+    path_lower = path.lower()
+
+    # SQL files - store full content
     if language == "sql" or file_type in ("ddl", "dml", "query"):
-        return f"\nSQL DDL Content:\n{content}"
+        return f"\nSQL DDL Content:\n{content[:MAX_SQL_CONTENT]}"
 
-    if language == "java" and ("options" in path.lower() or file_type == "source"):
-        return f"\nJava Source Code:\n{content[:MAX_JAVA_SOURCE_CONTENT]}"
+    # Form definitions - store full content
+    if file_type == "form_definition" or path_lower.endswith(".form"):
+        return f"\nForm Definition:\n{content[:MAX_FORM_CONTENT]}"
 
+    # Business logic files - store more content
     if language == "java":
-        return f"\nCode:\n{content[:MAX_JAVA_CONTENT]}"
-
-    if file_type == "form_definition":
-        return f"\nForm Definition:\n{content}"
+        is_business_file = any(
+            keyword in path_lower
+            for keyword in ["options", "adapter", "service", "action", "controller"]
+        )
+        if is_business_file or file_type == "source":
+            return f"\nJava Source Code (Business Logic):\n{content[:MAX_JAVA_SOURCE_CONTENT]}"
+        return f"\nJava Code:\n{content[:MAX_JAVA_CONTENT]}"
 
     return f"\nContent:\n{content[:MAX_DEFAULT_CONTENT]}"
 

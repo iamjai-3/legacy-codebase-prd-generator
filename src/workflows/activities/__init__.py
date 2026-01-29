@@ -17,6 +17,7 @@ from src.workflows.activities.analysis import (
 )
 from src.workflows.activities.extraction import (
     extract_code_activity,
+    extract_db_prd_activity,
     extract_existing_prd_activity,
     extract_screenshots_activity,
 )
@@ -32,6 +33,7 @@ __all__ = [
     "extract_code_activity",
     "extract_screenshots_activity",
     "extract_existing_prd_activity",
+    "extract_db_prd_activity",
     # Analysis
     "analyze_screenshots_activity",
     "analyze_database_activity",

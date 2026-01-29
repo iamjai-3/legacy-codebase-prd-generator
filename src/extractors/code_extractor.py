@@ -146,7 +146,10 @@ class CodeExtractor:
                     dependency_count=len(dependency_paths),
                 )
         else:
-            logger.info("No dependencies specified, extracting all code files", total_extracted=len(extracted_files))
+            logger.info(
+                "No dependencies specified, extracting all code files",
+                total_extracted=len(extracted_files),
+            )
 
         # Parse code files
         code_files: list[CodeFile] = []
@@ -222,11 +225,11 @@ class CodeExtractor:
         """Filter extracted files by dependency paths from MinIO."""
         if not dependency_paths:
             return extracted_files
-            
+
         filtered_files = [
             f for f in extracted_files if match_file_path(f, dependency_paths, extract_dir)
         ]
-        
+
         logger.info(
             "Filtered files by dependency paths",
             total_extracted=len(extracted_files),
@@ -234,7 +237,7 @@ class CodeExtractor:
             dependency_paths=len(dependency_paths),
             sample_deps=dependency_paths[:5] if dependency_paths else [],
         )
-        
+
         return filtered_files
 
     def _parse_code_file(self, file_path: Path, base_path: Path) -> CodeFile | None:
@@ -387,11 +390,11 @@ class CodeExtractor:
                     field_type = ""
                     if field.type:
                         if isinstance(field.type, javalang.tree.ReferenceType):
-                            if hasattr(field.type.name, '__iter__'):
+                            if hasattr(field.type.name, "__iter__"):
                                 field_type = ".".join(field.type.name)
                             else:
                                 field_type = str(field.type.name)
-                        elif hasattr(field.type, 'name'):
+                        elif hasattr(field.type, "name"):
                             field_type = str(field.type.name)
                         else:
                             field_type = str(field.type)
@@ -635,7 +638,7 @@ class CodeExtractor:
     def to_documents(self, code_files: list[CodeFile], form_name: str) -> list[Document]:
         """
         Convert CodeFile objects to LangChain Documents for vectorization.
-        
+
         Creates separate chunks for:
         - Class definitions (with all fields)
         - Method implementations (business logic)
@@ -653,46 +656,53 @@ class CodeExtractor:
 
         for code_file in code_files:
             # Determine document type based on file characteristics
-            is_dto = any("DTO" in c or "dto" in c.lower() for c in code_file.classes) or "dto" in code_file.path.lower()
+            is_dto = (
+                any("DTO" in c or "dto" in c.lower() for c in code_file.classes)
+                or "dto" in code_file.path.lower()
+            )
             is_model = code_file.file_type == "model" or "model" in code_file.path.lower()
-            
+
             # Create class definition document (for DTOs/models)
             if is_dto or is_model:
                 class_doc = self._create_class_definition_document(code_file, form_name)
                 if class_doc:
                     documents.append(class_doc)
-            
+
             # Create method/business logic documents
             if code_file.methods:
                 method_docs = self._create_method_documents(code_file, form_name)
                 documents.extend(method_docs)
-            
+
             # Create comprehensive code document (fallback for other files)
             if not (is_dto or is_model):
                 comprehensive_doc = self._create_comprehensive_document(code_file, form_name)
                 documents.append(comprehensive_doc)
 
-        logger.info("Converted code files to documents", count=len(documents), files=len(code_files))
+        logger.info(
+            "Converted code files to documents", count=len(documents), files=len(code_files)
+        )
 
         return documents
-    
-    def _create_class_definition_document(self, code_file: CodeFile, form_name: str) -> Document | None:
+
+    def _create_class_definition_document(
+        self, code_file: CodeFile, form_name: str
+    ) -> Document | None:
         """Create a document focused on class definition with all fields."""
         if not code_file.classes:
             return None
-            
+
         text_parts = [
             f"File: {code_file.path}",
             f"Class Definition: {', '.join(code_file.classes)}",
             f"Language: {code_file.language}",
             "",
         ]
-        
+
         if code_file.extends:
             text_parts.append(f"Extends: {code_file.extends}")
         if code_file.implements:
             text_parts.append(f"Implements: {', '.join(code_file.implements)}")
-        
+
         text_parts.append("")
         text_parts.append("## All Fields:")
         if code_file.fields:
@@ -700,12 +710,12 @@ class CodeExtractor:
                 text_parts.append(f"- {field}")
         else:
             text_parts.append("- No fields detected")
-        
+
         text_parts.append("")
         text_parts.append("## Full Class Code:")
         # Include up to 8000 chars for better context
         text_parts.append(code_file.content[:8000])
-        
+
         metadata = {
             "form_name": form_name,
             "file_path": code_file.path,
@@ -719,37 +729,52 @@ class CodeExtractor:
             "doc_type": "class_definition",
             "chunk_type": "class_definition",
         }
-        
+
         return Document(
             page_content="\n".join(text_parts),
             metadata=metadata,
         )
-    
+
     def _create_method_documents(self, code_file: CodeFile, form_name: str) -> list[Document]:
         """Create separate documents for important methods (business logic)."""
         documents = []
-        
+
         # Focus on methods that likely contain business logic
         important_methods = [
-            m for m in code_file.methods 
-            if any(keyword in m.lower() for keyword in [
-                "save", "update", "delete", "create", "validate", "check", 
-                "does", "using", "get", "set", "action"
-            ])
+            m
+            for m in code_file.methods
+            if any(
+                keyword in m.lower()
+                for keyword in [
+                    "save",
+                    "update",
+                    "delete",
+                    "create",
+                    "validate",
+                    "check",
+                    "does",
+                    "using",
+                    "get",
+                    "set",
+                    "action",
+                ]
+            )
         ]
-        
+
         # If too many methods, prioritize the important ones
-        methods_to_process = important_methods[:10] if len(important_methods) > 10 else code_file.methods[:15]
-        
+        methods_to_process = (
+            important_methods[:10] if len(important_methods) > 10 else code_file.methods[:15]
+        )
+
         for method_name in methods_to_process:
             # Extract method content using regex
-            method_pattern = rf'(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)?{re.escape(method_name)}\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{{([^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)'
+            method_pattern = rf"(?:public|private|protected)?\s*(?:static\s+)?(?:\w+\s+)?{re.escape(method_name)}\s*\([^)]*\)\s*(?:throws\s+[\w,\s]+)?\s*\{{([^{{}}]*(?:\{{[^{{}}]*\}}[^{{}}]*)*)"
             match = re.search(method_pattern, code_file.content, re.MULTILINE | re.DOTALL)
-            
+
             if match:
                 method_body = match.group(0)[:8000]  # Up to 8000 chars
-                line_num = code_file.content[:match.start()].count('\n') + 1
-                
+                line_num = code_file.content[: match.start()].count("\n") + 1
+
                 text_parts = [
                     f"File: {code_file.path}",
                     f"Method: {method_name}",
@@ -759,7 +784,7 @@ class CodeExtractor:
                     "## Method Implementation:",
                     method_body,
                 ]
-                
+
                 metadata = {
                     "form_name": form_name,
                     "file_path": code_file.path,
@@ -771,14 +796,16 @@ class CodeExtractor:
                     "doc_type": "business_logic",
                     "chunk_type": "method_implementation",
                 }
-                
-                documents.append(Document(
-                    page_content="\n".join(text_parts),
-                    metadata=metadata,
-                ))
-        
+
+                documents.append(
+                    Document(
+                        page_content="\n".join(text_parts),
+                        metadata=metadata,
+                    )
+                )
+
         return documents
-    
+
     def _create_comprehensive_document(self, code_file: CodeFile, form_name: str) -> Document:
         """Create a comprehensive document for files that aren't DTOs/models."""
         text_parts = [

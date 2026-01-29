@@ -43,31 +43,47 @@ async def extract_code_activity(
         # Use default bucket (metadatas) for all MinIO operations
         minio_sync = MinioSync(bucket=None)  # None = use default from settings (metadatas)
         logger.info("Using MinIO bucket for legacy codebase", bucket=minio_sync.bucket)
-        
+
         # Look for ZIP files in LEGACY_CODEBASE/ within the metadatas bucket
         legacy_objects = minio_sync.list_objects(prefix="LEGACY_CODEBASE/", bucket=None)
-        logger.info("Checking MinIO for legacy codebase", bucket=minio_sync.bucket, prefix="LEGACY_CODEBASE/", objects_found=len(legacy_objects))
-        
-        zip_files = [obj for obj in legacy_objects if obj.lower().endswith('.zip')]
-        
+        logger.info(
+            "Checking MinIO for legacy codebase",
+            bucket=minio_sync.bucket,
+            prefix="LEGACY_CODEBASE/",
+            objects_found=len(legacy_objects),
+        )
+
+        zip_files = [obj for obj in legacy_objects if obj.lower().endswith(".zip")]
+
         if zip_files:
             # Use the first ZIP file found (or could be smarter about selection)
             zip_object_name = zip_files[0]
-            logger.info("Loading legacy codebase from MinIO", object_name=zip_object_name, total_zips=len(zip_files))
-            
+            logger.info(
+                "Loading legacy codebase from MinIO",
+                object_name=zip_object_name,
+                total_zips=len(zip_files),
+            )
+
             # Download ZIP to temporary location
             import tempfile
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.zip', delete_on_close=False) as tmp_file:
-                zip_data = minio_sync.get_file_content(zip_object_name, bucket=None)  # Uses default metadatas bucket
+
+            with tempfile.NamedTemporaryFile(
+                delete=False, suffix=".zip", delete_on_close=False
+            ) as tmp_file:
+                zip_data = minio_sync.get_file_content(
+                    zip_object_name, bucket=None
+                )  # Uses default metadatas bucket
                 tmp_file.write(zip_data)
                 zip_path = tmp_file.name
                 temp_zip_path = zip_path  # Track for cleanup
-                logger.info("Downloaded ZIP from MinIO to temporary file", path=zip_path, size=len(zip_data))
+                logger.info(
+                    "Downloaded ZIP from MinIO to temporary file", path=zip_path, size=len(zip_data)
+                )
         else:
             logger.warning(
                 "No ZIP file found in MinIO LEGACY_CODEBASE/",
                 total_objects=len(legacy_objects),
-                objects=legacy_objects[:10] if legacy_objects else []
+                objects=legacy_objects[:10] if legacy_objects else [],
             )
             return {
                 "success": True,
@@ -84,16 +100,17 @@ async def extract_code_activity(
         zip_path_obj = Path(zip_path)
         extract_dir = Path(settings.uploads_dir) / zip_path_obj.stem
 
-        logger.info("Extracting code from ZIP", zip_path=zip_path, form_name=form_name, extract_dir=str(extract_dir))
-        code_files = extractor.extract_from_zip(
-            zip_path=zip_path, form_name=form_name
+        logger.info(
+            "Extracting code from ZIP",
+            zip_path=zip_path,
+            form_name=form_name,
+            extract_dir=str(extract_dir),
         )
+        code_files = extractor.extract_from_zip(zip_path=zip_path, form_name=form_name)
         logger.info("Code extraction complete", files_extracted=len(code_files))
     elif code_directory:
         extract_dir = Path(code_directory)
-        code_files = extractor.extract_from_directory(
-            directory=code_directory, form_name=form_name
-        )
+        code_files = extractor.extract_from_directory(directory=code_directory, form_name=form_name)
     else:
         # No code source available
         logger.warning("No code source provided and none found in MinIO")
@@ -159,16 +176,19 @@ async def extract_code_activity(
         # Full file content is stored in vector store via store_vectors_activity
         # This avoids exceeding Temporal gRPC message size limits (4MB default)
     }
-    
+
     # Clean up temporary ZIP file if it was downloaded from MinIO
     if temp_zip_path and Path(temp_zip_path).exists():
         try:
             import os
+
             os.unlink(temp_zip_path)
             logger.info("Cleaned up temporary ZIP file", path=temp_zip_path)
         except Exception as e:
-            logger.warning("Failed to clean up temporary ZIP file", path=temp_zip_path, error=str(e))
-    
+            logger.warning(
+                "Failed to clean up temporary ZIP file", path=temp_zip_path, error=str(e)
+            )
+
     return result
 
 
@@ -277,3 +297,94 @@ async def extract_existing_prd_activity(
         "combined_content": existing_prd.combined_content,
         "total_words": sum(doc.word_count for doc in existing_prd.documents),
     }
+
+
+@activity.defn
+async def extract_db_prd_activity(
+    form_name: str,
+) -> dict[str, Any]:
+    """
+    Extract DB_PRD documentation from MinIO.
+
+    This extracts database-related documentation from:
+    - DB_PRD/ (global database documentation, schemas, mappings)
+
+    These documents contain critical database schema information, table relationships,
+    and data mappings needed for accurate code migration.
+    """
+    logger.info(
+        "Starting DB_PRD extraction from MinIO",
+        form_name=form_name,
+    )
+
+    from src.utils.minio_sync import MinioSync
+
+    minio_sync = MinioSync(bucket=None)  # Use default bucket
+    documents_data = []
+
+    try:
+        # List all files in DB_PRD/
+        db_prd_objects = minio_sync.list_objects(prefix="DB_PRD/", bucket=None)
+        logger.info(f"Found {len(db_prd_objects)} objects in DB_PRD/")
+
+        for obj_name in db_prd_objects:
+            # Skip directory markers
+            if obj_name.endswith("/") or obj_name.endswith(".keep"):
+                continue
+
+            # Only process markdown and text files
+            if not any(obj_name.lower().endswith(ext) for ext in [".md", ".txt", ".sql"]):
+                continue
+
+            try:
+                content = minio_sync.get_file_text(obj_name, bucket=None)
+                filename = obj_name.split("/")[-1]
+
+                # Determine document type based on filename
+                doc_type = "database_schema"
+                if "mapping" in filename.lower():
+                    doc_type = "data_mapping"
+                elif "relation" in filename.lower():
+                    doc_type = "table_relationships"
+                elif "entity" in filename.lower():
+                    doc_type = "entity_definition"
+                elif ".sql" in filename.lower():
+                    doc_type = "sql_schema"
+
+                documents_data.append(
+                    {
+                        "path": obj_name,
+                        "filename": filename,
+                        "content": content,
+                        "document_type": doc_type,
+                        "title": filename.replace("_", " ").replace(".md", "").replace(".txt", ""),
+                        "word_count": len(content.split()),
+                        "source": "db_prd",
+                    }
+                )
+
+                logger.debug(f"Extracted DB_PRD document: {filename}")
+
+            except Exception as e:
+                logger.warning(f"Failed to extract {obj_name}: {e}")
+
+        logger.info(f"Extracted DB_PRD for {form_name}: {len(documents_data)} documents")
+
+        return {
+            "form_name": form_name,
+            "success": True,
+            "document_count": len(documents_data),
+            "documents": documents_data,
+            "total_words": sum(doc["word_count"] for doc in documents_data),
+        }
+
+    except Exception as e:
+        logger.warning(f"Failed to extract DB_PRD: {e}")
+        return {
+            "form_name": form_name,
+            "success": False,
+            "document_count": 0,
+            "documents": [],
+            "total_words": 0,
+            "error": str(e),
+        }
