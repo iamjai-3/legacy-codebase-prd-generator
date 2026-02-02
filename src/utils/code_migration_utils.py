@@ -75,14 +75,13 @@ def parse_llm_code_response(
         first_line = match.group(1).strip()
         content = match.group(2).strip()
 
-        # Handle language:filepath format (e.g., "csharp:FleetManagement.Data/Entity.cs")
-        if ":" in first_line and "/" in first_line:
-            # Split by first colon to get filepath
+        # Handle language:filepath format (e.g. "csharp:Project.Data/Entity.cs", "json:package.json")
+        if ":" in first_line:
             parts = first_line.split(":", 1)
-            if len(parts) == 2 and "/" in parts[1]:
-                # It's a language:filepath format
+            if len(parts) == 2:
                 file_path = parts[1].strip()
-                file_content_map[file_path] = content
+                if file_path:
+                    file_content_map[file_path] = content
                 continue
 
         # Check if first_line is a file path (contains / or \ or has extension)
@@ -176,19 +175,62 @@ def parse_llm_code_response(
     return files, documentation, swagger_json
 
 
+def _normalize_file_path(base_path: Path, raw_path: str) -> Path | None:
+    """
+    Normalize a file path so it stays under base_path. Prevents writing outside project.
+
+    Args:
+        base_path: Base directory (e.g. form_backend or form_frontend)
+        raw_path: Path from LLM (e.g. "src/App.tsx" or "LE11Management.API/Controllers/X.cs")
+
+    Returns:
+        Resolved path under base_path, or None if path would escape base_path
+    """
+    base_path = base_path.resolve()
+    # Strip leading slashes and normalize separators
+    p = raw_path.strip().replace("\\", "/").lstrip("/")
+    if not p or p.startswith(".."):
+        return None
+    # Remove any ".." segments that would escape
+    parts = []
+    for part in p.split("/"):
+        if part == "..":
+            if parts:
+                parts.pop()
+            else:
+                return None
+        elif part and part != ".":
+            parts.append(part)
+    if not parts:
+        return None
+    resolved = (base_path / "/".join(parts)).resolve()
+    try:
+        resolved.relative_to(base_path)
+    except ValueError:
+        return None
+    return resolved
+
+
 def create_directory_structure(base_path: Path, files: list[dict[str, str]]) -> None:
     """
     Create directory structure and write files.
+    Paths are normalized so files are never written outside base_path.
 
     Args:
-        base_path: Base directory path
+        base_path: Base directory path (e.g. output/migratedCode/form_backend or form_frontend)
         files: List of dicts with "path" and "content" keys
     """
-    base_path = Path(base_path)
+    base_path = Path(base_path).resolve()
     base_path.mkdir(parents=True, exist_ok=True)
 
     for file_info in files:
-        file_path = base_path / file_info["path"]
+        raw_path = file_info.get("path", "").strip()
+        if not raw_path:
+            continue
+        file_path = _normalize_file_path(base_path, raw_path)
+        if file_path is None:
+            logger.warning("Skipping path outside base: %s", raw_path)
+            continue
 
         # Create parent directories
         file_path.parent.mkdir(parents=True, exist_ok=True)
@@ -196,9 +238,9 @@ def create_directory_structure(base_path: Path, files: list[dict[str, str]]) -> 
         # Write file content
         try:
             file_path.write_text(file_info["content"], encoding="utf-8")
-            logger.debug(f"Created file: {file_path}")
+            logger.debug("Created file: %s", file_path)
         except Exception as e:
-            logger.error(f"Failed to write file {file_path}: {e}")
+            logger.error("Failed to write file %s: %s", file_path, e)
             raise
 
 
@@ -352,30 +394,35 @@ def validate_frontend_structure(
 
     file_paths = [f.get("path", "") for f in files]
 
+    # Required for valid React app: package.json at root, entry point
+    required_files = [
+        "package.json",
+        "src/main.tsx",
+        "src/App.tsx",
+    ]
+    for req_file in required_files:
+        file_exists = any(path == req_file or path.endswith("/" + req_file) for path in file_paths)
+        if not file_exists:
+            # Also accept index.tsx as entry
+            if req_file == "src/main.tsx":
+                file_exists = any("main.tsx" in path or "index.tsx" in path for path in file_paths)
+            if not file_exists:
+                validation_result["missing_files"].append(req_file)
+                validation_result["valid"] = False
+
     # Required folder structure
     required_folders = [
+        "src/",
         "src/types",
         "src/hooks",
         "src/components",
     ]
 
-    # Check folders exist
+    # Check folders exist (any file under that path)
     for folder in required_folders:
-        folder_exists = any(folder in path for path in file_paths)
+        folder_exists = any(folder.rstrip("/") in path for path in file_paths)
         if not folder_exists:
             validation_result["missing_folders"].append(folder)
-            validation_result["valid"] = False
-
-    # Required base files
-    required_files = [
-        "types/",
-        "hooks/",
-    ]
-
-    for req_file in required_files:
-        file_exists = any(req_file in path for path in file_paths)
-        if not file_exists:
-            validation_result["missing_files"].append(req_file)
             validation_result["valid"] = False
 
     # Check for component files

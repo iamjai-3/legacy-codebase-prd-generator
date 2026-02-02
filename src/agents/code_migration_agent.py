@@ -574,52 +574,59 @@ Do NOT invent fields or UI elements - extract everything from the knowledge base
         kb_contexts: dict[str, list[str]],
     ) -> str:
         """
-        Generate .NET backend code using MULTI-PASS approach.
+        Generate .NET backend code using MULTI-PASS approach (4 passes for 100% output).
 
-        Pass 1: Data Layer (Entities, Configurations, DbContext, Repositories)
-        Pass 2: Business Layer (Services, Validators, DTOs)
-        Pass 3: API Layer (Controllers, Middleware, Program.cs)
-
-        This ensures complete generation of all layers.
+        Pass 1a: Data Layer core (Entities, Configurations, DbContext)
+        Pass 1b: Repositories (Interfaces + Implementations)
+        Pass 2: Business Layer (Services, DTOs, Validators, Mappings)
+        Pass 3: API Layer (Controllers, Program.cs, appsettings, Common)
         """
-        self.logger.info("Starting multi-pass backend generation")
+        self.logger.info("Starting 4-pass backend generation for 100%% output")
 
-        # Build comprehensive context for all passes
         dependencies_context = self._build_backend_context(kb_contexts)
-
         all_files = []
 
-        # ============ PASS 1: DATA LAYER ============
-        self.logger.info("Pass 1: Generating Data Layer (Entities, Configurations, DbContext)")
-        data_layer_prompt = self._build_data_layer_prompt(context, json_spec, dependencies_context)
-        data_layer_response = await self.invoke_llm(context, data_layer_prompt)
-        data_layer_files, _, _ = parse_llm_code_response(data_layer_response)
-        all_files.extend(data_layer_files)
-        self.logger.info(f"Pass 1 complete: {len(data_layer_files)} files generated")
+        # ============ PASS 1a: ENTITIES, CONFIGURATIONS, DBCONTEXT ============
+        self.logger.info("Pass 1a: Data Layer (Entities, Configurations, DbContext)")
+        data_core_prompt = self._build_data_core_prompt(context, json_spec, dependencies_context)
+        data_core_response = await self.invoke_llm(context, data_core_prompt)
+        data_core_files, _, _ = parse_llm_code_response(data_core_response)
+        all_files.extend(data_core_files)
+        self.logger.info("Pass 1a complete: %s files", len(data_core_files))
+
+        # ============ PASS 1b: REPOSITORIES ============
+        self.logger.info("Pass 1b: Repositories (Interfaces + Implementations)")
+        repos_prompt = self._build_repositories_prompt(
+            context, json_spec, dependencies_context, data_core_files
+        )
+        repos_response = await self.invoke_llm(context, repos_prompt)
+        repos_files, _, _ = parse_llm_code_response(repos_response)
+        all_files.extend(repos_files)
+        self.logger.info("Pass 1b complete: %s files", len(repos_files))
+
+        data_layer_files = data_core_files + repos_files
 
         # ============ PASS 2: BUSINESS LAYER ============
-        self.logger.info("Pass 2: Generating Business Layer (Services, Validators, DTOs)")
+        self.logger.info("Pass 2: Business Layer (Services, DTOs, Validators, Mappings)")
         business_layer_prompt = self._build_business_layer_prompt(
             context, json_spec, dependencies_context, data_layer_files
         )
         business_layer_response = await self.invoke_llm(context, business_layer_prompt)
         business_layer_files, _, _ = parse_llm_code_response(business_layer_response)
         all_files.extend(business_layer_files)
-        self.logger.info(f"Pass 2 complete: {len(business_layer_files)} files generated")
+        self.logger.info("Pass 2 complete: %s files", len(business_layer_files))
 
         # ============ PASS 3: API LAYER ============
-        self.logger.info("Pass 3: Generating API Layer (Controllers, Program.cs)")
+        self.logger.info("Pass 3: API Layer (Controllers, Program.cs, appsettings, Common)")
         api_layer_prompt = self._build_api_layer_prompt(
             context, json_spec, dependencies_context, data_layer_files, business_layer_files
         )
         api_layer_response = await self.invoke_llm(context, api_layer_prompt)
         api_layer_files, documentation, swagger_json = parse_llm_code_response(api_layer_response)
         all_files.extend(api_layer_files)
-        self.logger.info(f"Pass 3 complete: {len(api_layer_files)} files generated")
+        self.logger.info("Pass 3 complete: %s files", len(api_layer_files))
 
-        # Combine all files into final response format
-        self.logger.info(f"Multi-pass backend generation complete: {len(all_files)} total files")
-
+        self.logger.info("Backend generation complete: %s total files", len(all_files))
         return self._format_multipass_response(all_files, documentation, swagger_json)
 
     def _build_backend_context(self, kb_contexts: dict[str, list[str]]) -> str:
@@ -669,13 +676,15 @@ Do NOT invent fields or UI elements - extract everything from the knowledge base
 
         return "\n\n".join(dependencies_parts) if dependencies_parts else "No additional context."
 
-    def _build_data_layer_prompt(
+    def _build_data_core_prompt(
         self, context: AgentContext, json_spec: str, dependencies_context: str
     ) -> str:
-        """Build prompt for Data Layer generation."""
+        """Build prompt for Data Layer core: Entities, Configurations, DbContext only."""
         project_name = self._get_project_name(context.form_name)
 
-        return f"""You are migrating "{context.form_name}" to .NET 8. Generate the DATA LAYER only.
+        return f"""You are migrating "{context.form_name}" to .NET 8. Generate ONLY the Data Layer CORE (Entities, Configurations, DbContext). You will generate Repositories in a separate step.
+
+MANDATORY: You MUST output EVERY file listed below. Do not skip any entity, configuration, or DbContext.
 
 === JSON SPECIFICATION ===
 {json_spec}
@@ -683,31 +692,83 @@ Do NOT invent fields or UI elements - extract everything from the knowledge base
 === KNOWLEDGE BASE CONTEXT ===
 {dependencies_context}
 
-Generate COMPLETE files for the Data Layer with this EXACT structure:
+Generate COMPLETE files with this EXACT structure (no Repositories in this step):
 
 {project_name}.Data/
 ├── Entities/
-│   └── [Entity].cs              # One file per entity with ALL fields
+│   └── [Entity].cs              # ONE FILE PER ENTITY - extract ALL from JSON/legacy
 ├── Configurations/
-│   └── [Entity]Configuration.cs # EF Core configurations with constraints
-├── Context/
-│   └── {project_name}DbContext.cs  # DbContext with all DbSets
-└── Repositories/
-    ├── Interfaces/
-    │   └── I[Entity]Repository.cs
-    └── Implementations/
-        └── [Entity]Repository.cs
+│   └── [Entity]Configuration.cs # ONE PER ENTITY - table name, columns, relationships
+└── Context/
+    └── {project_name}DbContext.cs  # DbContext with DbSet for EVERY entity
 
 REQUIREMENTS:
-1. Extract ALL entities from the legacy code and JSON spec
-2. Include ALL fields with correct types (string, int, decimal, DateTime, etc.)
-3. Add proper data annotations ([Key], [MaxLength], [Required], [Column])
-4. Configure relationships (foreign keys, navigation properties)
-5. Repositories must have async CRUD methods
+1. Extract ALL entities from the JSON spec and knowledge base - one .cs file per entity
+2. Every entity: ALL fields, correct types, [Key], [MaxLength], [Required], [Column], navigation properties
+3. Every configuration: ToTable, HasKey, Property mappings, HasOne/WithMany relationships
+4. DbContext: DbSet<Entity> for every entity, OnModelCreating if needed
+5. Use exact table/column names from legacy (knowledge base)
 
-Output each file with:
-```csharp:{project_name}.Data/[folder]/[filename].cs
-// file content
+Output EACH file in a separate code block:
+```csharp:{project_name}.Data/Entities/[EntityName].cs
+// full file content
+```
+```csharp:{project_name}.Data/Configurations/[EntityName]Configuration.cs
+// full file content
+```
+```csharp:{project_name}.Data/Context/{project_name}DbContext.cs
+// full file content
+```"""
+
+    def _build_repositories_prompt(
+        self,
+        context: AgentContext,
+        json_spec: str,
+        dependencies_context: str,
+        data_core_files: list[dict[str, str]],
+    ) -> str:
+        """Build prompt for Repositories only (Interfaces + Implementations)."""
+        project_name = self._get_project_name(context.form_name)
+        entity_names = []
+        for f in data_core_files:
+            if "Entities/" in f.get("path", ""):
+                name = f["path"].split("/")[-1].replace(".cs", "")
+                entity_names.append(name)
+        entities_str = ", ".join(entity_names) if entity_names else "every entity from Data layer"
+
+        return f"""You are migrating "{context.form_name}" to .NET 8. Generate ONLY Repositories (Interfaces + Implementations). Entities and DbContext already exist.
+
+MANDATORY: You MUST output ONE interface and ONE implementation per entity. Do not skip any.
+
+=== JSON SPECIFICATION ===
+{json_spec}
+
+=== ENTITIES (already created) ===
+{entities_str}
+
+=== KNOWLEDGE BASE CONTEXT ===
+{dependencies_context}
+
+Generate COMPLETE files:
+
+{project_name}.Data/
+└── Repositories/
+    ├── Interfaces/
+    │   └── I[Entity]Repository.cs   # ONE PER ENTITY
+    └── Implementations/
+        └── [Entity]Repository.cs   # ONE PER ENTITY
+
+REQUIREMENTS:
+1. I[Entity]Repository: GetAllAsync, GetByIdAsync (or composite key), AddAsync, UpdateAsync, DeleteAsync, plus any from legacy (ExistsAsync, etc.)
+2. [Entity]Repository: Implement interface, inject {project_name}DbContext, use DbSet, async/await
+3. Handle composite keys where needed (e.g. FleetChapter: Fleet + Chapter)
+
+Output EACH file:
+```csharp:{project_name}.Data/Repositories/Interfaces/I[Entity]Repository.cs
+// full content
+```
+```csharp:{project_name}.Data/Repositories/Implementations/[Entity]Repository.cs
+// full content
 ```"""
 
     def _build_business_layer_prompt(
@@ -731,7 +792,9 @@ Output each file with:
             ", ".join(entity_names) if entity_names else "(extract entities from knowledge base)"
         )
 
-        return f"""You are migrating "{context.form_name}" to .NET 8. Generate the BUSINESS LAYER only.
+        return f"""You are migrating "{context.form_name}" to .NET 8. Generate the BUSINESS LAYER only (DTOs, Services, Validators, Mappings).
+
+MANDATORY: You MUST generate EVERY file below. Do not skip DTOs, Service interfaces, Service implementations, or Validators. Services MUST contain real business logic from the knowledge base.
 
 === JSON SPECIFICATION ===
 {json_spec}
@@ -742,7 +805,7 @@ Output each file with:
 === KNOWLEDGE BASE CONTEXT ===
 {dependencies_context}
 
-Generate COMPLETE files for the Business Layer with this EXACT structure:
+Generate COMPLETE files for the Business Layer:
 
 {project_name}.Business/
 ├── DTOs/
@@ -752,28 +815,26 @@ Generate COMPLETE files for the Business Layer with this EXACT structure:
 │       └── [Entity]UpdateDto.cs
 ├── Services/
 │   ├── Interfaces/
-│   │   └── I[Entity]Service.cs
+│   │   └── I[Entity]Service.cs      # ONE PER ENTITY - all methods from legacy
 │   └── Implementations/
-│       └── [Entity]Service.cs
+│       └── [Entity]Service.cs      # ONE PER ENTITY - FULL implementation
 ├── Validators/
-│   └── [Entity]Validator.cs
+│   └── [Entity]Validator.cs        # ONE PER ENTITY - FluentValidation
 └── Mappings/
-    └── MappingProfile.cs         # AutoMapper profile
+    └── MappingProfile.cs           # AutoMapper: Entity <-> DTOs
 
 REQUIREMENTS:
-1. Create DTOs for ALL entities (Read, Create, Update variants)
-2. Services must implement ALL business logic from legacy code:
-   - GetAll, GetById, Create, Update, Delete
-   - Custom methods (SaveChanges, ValidateExists, etc.)
-3. Include ALL validation rules from legacy code
-4. Services must use repositories via dependency injection
-5. Map ALL legacy methods like doUsingSave(), doesExist() to service methods
+1. DTOs: Read/Create/Update for EVERY entity; match entity fields exactly
+2. I[Entity]Service: GetAllAsync, GetByIdAsync, CreateAsync, UpdateAsync, DeleteAsync + every custom method from legacy (SaveChanges, ValidateExists, etc.)
+3. [Entity]Service: FULL implementation - inject I[Entity]Repository, implement every method with real logic from knowledge base (validations, calculations, workflows). Do NOT leave methods empty or as stubs.
+4. Validators: rules from legacy (Required, MaxLength, custom rules)
+5. MappingProfile: CreateMap for each Entity <-> ReadDto/CreateDto/UpdateDto
 
-CRITICAL: Extract ALL business logic from the knowledge base. Every legacy method must have a corresponding service method.
+CRITICAL: Service implementations must contain the actual business logic from the knowledge base (calculations, validations, conditional logic). Extract from METHOD and BUSINESS LOGIC sections.
 
-Output each file with:
-```csharp:{project_name}.Business/[folder]/[filename].cs
-// file content
+Output EACH file in its own code block:
+```csharp:{project_name}.Business/[folder]/[path].cs
+// full file content
 ```"""
 
     def _build_api_layer_prompt(
@@ -800,6 +861,8 @@ Output each file with:
 
         return f"""You are migrating "{context.form_name}" to .NET 8. Generate the API LAYER only.
 
+MANDATORY: You MUST generate ALL of these files. Do not skip Program.cs, appsettings, Common, or any Controller.
+
 === JSON SPECIFICATION ===
 {json_spec}
 
@@ -809,45 +872,49 @@ Output each file with:
 === KNOWLEDGE BASE CONTEXT ===
 {dependencies_context}
 
-Generate COMPLETE files for the API Layer with this EXACT structure:
+Generate COMPLETE files:
 
 {project_name}.API/
 ├── Controllers/
-│   └── [Entity]Controller.cs     # One controller per entity
-├── Program.cs                    # Full startup with DI
-├── appsettings.json
+│   └── [Entity]Controller.cs     # ONE controller PER entity (FleetChaptersController, ChapterController, etc.)
+├── Program.cs                    # MANDATORY: WebApplicationBuilder, AddDbContext, AddScoped for ALL repositories and services, AddControllers, Swagger
+├── appsettings.json              # MANDATORY: ConnectionStrings, Logging
 └── appsettings.Development.json
 
 {project_name}.Common/
 ├── Exceptions/
 │   └── NotFoundException.cs
 └── Models/
-    ├── ApiResponse.cs
+    ├── ApiResponse.cs            # Generic ApiResponse<T>, Succeed/Fail
     └── PagedResult.cs
 
 REQUIREMENTS:
-1. Controllers must have ALL endpoints from functional requirements:
-   - GET /api/[entity] - Get all
-   - GET /api/[entity]/{{id}} - Get by ID
-   - POST /api/[entity] - Create
-   - PUT /api/[entity]/{{id}} - Update
-   - DELETE /api/[entity]/{{id}} - Delete
-   - Custom endpoints for legacy actions (validate, save-changes, etc.)
-2. Use [ApiController] and [Route("api/[controller]")]
-3. Include proper error handling with try-catch
-4. Return ApiResponse<T> for consistent responses
-5. Program.cs must register ALL services, repositories, DbContext
-6. Include Swagger/OpenAPI configuration
+1. ONE Controller per entity: [Entity]Controller with [Route("api/[controller]")], inject I[Entity]Service
+2. Each controller: GET all, GET by id (or composite), POST, PUT, DELETE + custom actions from legacy
+3. Program.cs: MUST register DbContext, EVERY I*Repository -> *Repository, EVERY I*Service -> *Service, AddControllers, UseSwagger/UseSwaggerUI
+4. appsettings.json: ConnectionStrings:DefaultConnection, Logging
+5. Common: ApiResponse<T>, PagedResult<T>, NotFoundException
 
-Also generate a Swagger/OpenAPI specification between:
+Also output Swagger JSON between:
 ===SWAGGER_START===
-{{json swagger spec}}
+{{"openapi":"3.0.0", ...}}
 ===SWAGGER_END===
 
-Output each file with:
-```csharp:{project_name}.API/[folder]/[filename].cs
-// file content
-```"""
+Output EACH file (Program.cs, appsettings.json, appsettings.Development.json, every Controller, Common files):
+```csharp:{project_name}.API/Program.cs
+// full content
+```
+```csharp:{project_name}.API/Controllers/[Entity]Controller.cs
+// full content
+```
+```json:{project_name}.API/appsettings.json
+// full content
+```
+And Common:
+```csharp:{project_name}.Common/Models/ApiResponse.cs
+// full content
+```
+etc."""
 
     def _format_multipass_response(
         self,
@@ -893,13 +960,22 @@ Output each file with:
 
         This ensures complete generation of all layers.
         """
-        self.logger.info("Starting multi-pass frontend generation")
+        self.logger.info("Starting 4-pass frontend generation for valid React app")
 
-        # Build comprehensive context for all passes
         dependencies_context = self._build_frontend_context(kb_contexts)
         swagger_str = json.dumps(swagger_json, indent=2) if swagger_json else "{}"
 
         all_files = []
+
+        # ============ PASS 0: PROJECT SCAFFOLD (package.json, public/, entry) ============
+        self.logger.info("Pass 0: Generating project scaffold (package.json, public/, src/main)")
+        scaffold_prompt = self._build_frontend_scaffold_prompt(
+            context, json_spec, dependencies_context
+        )
+        scaffold_response = await self.invoke_llm(context, scaffold_prompt)
+        scaffold_files, _, _ = parse_llm_code_response(scaffold_response)
+        all_files.extend(scaffold_files)
+        self.logger.info("Pass 0 complete: %s files", len(scaffold_files))
 
         # ============ PASS 1: TYPES & SCHEMAS ============
         self.logger.info("Pass 1: Generating Types & Schemas")
@@ -972,6 +1048,52 @@ Output each file with:
 
         return "\n\n".join(dependencies_parts) if dependencies_parts else "No additional context."
 
+    def _build_frontend_scaffold_prompt(
+        self, context: AgentContext, json_spec: str, dependencies_context: str
+    ) -> str:
+        """Build prompt for React project scaffold - valid runnable app root."""
+        return f"""You are creating a React + TypeScript + Vite project for "{context.form_name}". Generate ONLY the project scaffold (root config and entry files).
+
+MANDATORY: You MUST output each of these files. Paths are relative to the project root.
+
+Generate these files (paths relative to project root):
+
+package.json          # name, scripts (dev, build, preview), dependencies: react, react-dom, react-router-dom, @tanstack/react-query, axios, zod, typescript, vite
+index.html            # Vite entry: <script type="module" src="/src/main.tsx"></script>
+vite.config.ts        # defineConfig, react(), resolve alias @/
+tsconfig.json         # compilerOptions for React + strict
+tsconfig.node.json    # for Vite config
+public/
+  index.html          # optional minimal HTML if needed; or use root index.html only
+src/
+  main.tsx            # createRoot, BrowserRouter, QueryClientProvider, App
+  App.tsx             # Routes with placeholder routes (e.g. /, /fleet-chapters)
+  vite-env.d.ts       # /// <reference types="vite/client" />
+
+REQUIREMENTS:
+1. package.json: "name": "{context.form_name}-frontend", scripts dev/build/preview, all deps with versions
+2. src/main.tsx: React 18 createRoot, wrap with QueryClientProvider and BrowserRouter, render <App />
+3. src/App.tsx: Basic layout and <Routes><Route path="/" element=... /></Routes>
+4. All paths in your output MUST be relative to project root: package.json, index.html, src/main.tsx, etc. (no leading slash, no ..)
+
+Output EACH file with path relative to project root:
+```json:package.json
+{{ ... }}
+```
+```html:index.html
+<!DOCTYPE html>...
+```
+```typescript:vite.config.ts
+...
+```
+```typescript:src/main.tsx
+...
+```
+```tsx:src/App.tsx
+...
+```
+etc."""
+
     def _build_frontend_types_prompt(
         self, context: AgentContext, json_spec: str, swagger_str: str, dependencies_context: str
     ) -> str:
@@ -987,30 +1109,29 @@ Output each file with:
 === KNOWLEDGE BASE CONTEXT ===
 {dependencies_context}
 
-Generate COMPLETE files for Types & Schemas with this EXACT structure:
+Generate COMPLETE files. Paths MUST be relative to the React project root (e.g. src/types/..., no leading / or ..):
 
 src/
 ├── types/
 │   ├── index.ts                  # Export all types
-│   ├── fleet.ts                  # Fleet-related types
-│   ├── chapter.ts                # Chapter-related types
-│   └── api.ts                    # API response types
+│   └── [entity].ts               # One file per entity + api.ts
 └── schemas/
     ├── index.ts                  # Export all schemas
-    ├── fleet.schema.ts           # Zod schemas for fleet
-    └── chapter.schema.ts         # Zod schemas for chapter
+    └── [entity].schema.ts        # Zod schemas per entity
 
 REQUIREMENTS:
-1. Create TypeScript interfaces for ALL entities from backend
-2. Match field names EXACTLY with backend DTOs
-3. Include all field types (string, number, boolean, Date, etc.)
-4. Create Zod schemas for form validation
-5. Export everything properly for use in components
+1. TypeScript interfaces for ALL entities from backend; match field names exactly
+2. Zod schemas for form validation
+3. Paths in code blocks: src/types/index.ts, src/types/fleet.ts, etc. (relative to project root)
 
-Output each file with:
-```typescript:src/[folder]/[filename].ts
-// file content
-```"""
+Output each file:
+```typescript:src/types/index.ts
+// content
+```
+```typescript:src/types/fleet.ts
+// content
+```
+etc."""
 
     def _build_frontend_hooks_prompt(
         self, context: AgentContext, json_spec: str, swagger_str: str, dependencies_context: str
@@ -1027,36 +1148,30 @@ Output each file with:
 === KNOWLEDGE BASE CONTEXT ===
 {dependencies_context}
 
-Generate COMPLETE files for API Hooks with this EXACT structure:
+Generate COMPLETE files. Paths MUST be relative to project root (e.g. src/hooks/api/...):
 
 src/
-├── hooks/
-│   └── api/
-│       ├── index.ts              # Export all hooks
-│       ├── useFleets.ts          # Fleet CRUD hooks
-│       ├── useChapters.ts        # Chapter CRUD hooks
-│       └── useChapterAlertRates.ts  # Alert rate hooks
+├── hooks/api/
+│   ├── index.ts
+│   └── use[Entity].ts            # One hook file per entity/endpoint
 ├── lib/
-│   └── api.ts                    # Axios instance configuration
-└── services/
-    └── api/
-        ├── fleetService.ts       # Fleet API calls
-        ├── chapterService.ts     # Chapter API calls
-        └── chapterAlertRateService.ts  # Alert rate API calls
+│   └── api.ts                    # Axios/fetch base URL and client
+└── services/api/
+    └── [entity]Service.ts        # API calls per entity
 
 REQUIREMENTS:
-1. Use TanStack Query (React Query) for data fetching
-2. Create hooks for ALL CRUD operations:
-   - useQuery for GET operations
-   - useMutation for POST/PUT/DELETE
-3. Include proper TypeScript types
-4. Handle loading, error, and success states
-5. Match ALL endpoints from the Swagger spec
+1. TanStack Query: useQuery for GET, useMutation for POST/PUT/DELETE
+2. One hook file per entity matching Swagger endpoints
+3. Paths: src/hooks/api/useFleets.ts, src/lib/api.ts, etc. (relative to project root)
 
-Output each file with:
-```typescript:src/[folder]/[filename].ts
-// file content
-```"""
+Output each file:
+```typescript:src/lib/api.ts
+// content
+```
+```typescript:src/hooks/api/useFleets.ts
+// content
+```
+etc."""
 
     def _build_frontend_components_prompt(
         self,
@@ -1069,6 +1184,8 @@ Output each file with:
         """Build prompt for Components generation."""
         return f"""You are migrating "{context.form_name}" to React TypeScript. Generate ALL COMPONENTS.
 
+MANDATORY: Paths MUST be relative to the React project root (e.g. src/components/..., src/pages/...). No leading slash, no "..". This ensures the app is written inside the correct project folder.
+
 === JSON SPECIFICATION ===
 {json_spec}
 
@@ -1078,47 +1195,36 @@ Output each file with:
 === KNOWLEDGE BASE CONTEXT ===
 {dependencies_context}
 
-Generate COMPLETE files for ALL screens from the PRD/knowledge base with this structure:
+Generate COMPLETE files. Structure (all paths relative to project root):
 
 src/
 ├── components/
-│   ├── ui/                       # shadcn/ui components (assume installed)
-│   ├── [feature]/                # One folder per major feature/entity
-│   │   ├── [Feature]SelectionScreen/
+│   ├── ui/                       # Button, Card, Form, Input, Select, Table, Dialog
+│   ├── [feature]/                # One folder per entity/feature
+│   │   ├── [Feature]Screen/
 │   │   │   ├── index.tsx
-│   │   │   ├── [Feature]SelectionForm.tsx
-│   │   │   └── [Feature]SelectionList.tsx
-│   │   └── [Feature]ManagementScreen/
-│   │       ├── index.tsx
-│   │       ├── [Feature]ManagementForm.tsx
-│   │       └── [Feature]ManagementTable.tsx
+│   │   │   ├── [Feature]Form.tsx
+│   │   │   └── [Feature]Table.tsx
 │   └── common/
-│       ├── DataChangeWarningDialog.tsx
 │       └── ConfirmationDialog.tsx
 ├── pages/
-│   ├── index.tsx                 # Home/Dashboard
+│   ├── index.tsx                 # Home
 │   └── [feature]/
-│       ├── index.tsx             # Feature list
-│       └── [id].tsx              # Feature detail
-└── App.tsx                       # Main app with routing
+│       ├── index.tsx             # List
+│       └── [id].tsx              # Detail
+└── App.tsx                       # Update with Routes for all screens
 
 REQUIREMENTS:
-1. Create ALL screens mentioned in the PRD and knowledge base:
-   - Selection screens for each entity with dropdowns
-   - Management screens with forms and tables for CRUD
-   - Warning/confirmation dialogs
-   - Search screens if mentioned in PRD
-2. Use shadcn/ui components (Button, Card, Form, Input, Select, Table, Dialog)
-3. Use react-hook-form with zodResolver for forms
-4. Use TanStack Query hooks for data fetching
-5. Include proper loading and error states
-6. Match ALL UI elements from legacy screenshots in knowledge base
-7. Generate screens for ALL entities/features from the backend API
+1. One screen/folder per entity from backend (FleetChapters, Chapter, etc.)
+2. Forms with react-hook-form + zodResolver; TanStack Query for data
+3. Paths in code blocks: src/components/fleet/FleetScreen/index.tsx, src/pages/fleet-chapters/index.tsx, etc.
+4. Update src/App.tsx with <Route path="/fleet-chapters" element=... /> for each feature
 
-IMPORTANT: Extract screen names and features from the knowledge base context above.
-Do NOT hardcode - use whatever entities and features are described in the legacy code and PRD.
-
-Output each file with:
-```tsx:src/[folder]/[filename].tsx
-// file content
-```"""
+Output EACH file with path relative to project root:
+```tsx:src/components/fleet/FleetScreen/index.tsx
+// content
+```
+```tsx:src/pages/fleet-chapters/index.tsx
+// content
+```
+etc."""
