@@ -125,8 +125,10 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
         # Try MinIO first: FORMS/{FORM_NAME}/FORM_DOCS/{FORM_NAME}_SourceTables.md
         try:
             minio_sync = MinioSync()
-            minio_object_name = f"FORMS/{form_name_upper}/FORM_DOCS/{form_name_upper}_SourceTables.md"
-            
+            minio_object_name = (
+                f"FORMS/{form_name_upper}/FORM_DOCS/{form_name_upper}_SourceTables.md"
+            )
+
             # Check if object exists in MinIO
             if minio_sync.file_exists(minio_object_name):
                 content = minio_sync.get_file_text(minio_object_name)
@@ -150,7 +152,7 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
                 / "FORM_DOCS"
                 / f"{form_name_upper}_SourceTables.md"
             )
-            
+
             if form_specific_path.exists():
                 db_doc_path = form_specific_path
                 self.logger.info(
@@ -176,7 +178,10 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
             content = f.read()
 
         self.logger.debug(
-            "Database documentation loaded", size=len(content), path=str(db_path), form_name=form_name
+            "Database documentation loaded",
+            size=len(content),
+            path=str(db_path),
+            form_name=form_name,
         )
         return content
 

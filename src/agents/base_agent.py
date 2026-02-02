@@ -12,10 +12,12 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
 
+from langchain_anthropic import ChatAnthropic
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
-from src.config.settings import get_settings
+from src.config.settings import LLMProvider, get_settings
 from src.utils.logging_config import ExecutionTimer, get_logger
 from src.utils.serialization import (
     extract_json_array,
@@ -74,22 +76,53 @@ class BaseAgent(ABC, Generic[T]):
         """
         self.name = name
         self.settings = get_settings()
-        self._llm: ChatOpenAI | None = None
+        self._llm: BaseChatModel | None = None
         self._vector_store: QdrantManager | None = None
         self.logger = get_logger(name, agent=name)
 
     @property
-    def llm(self) -> ChatOpenAI:
-        """Get or create the LLM instance."""
+    def llm(self) -> BaseChatModel:
+        """Get or create the LLM instance based on configured provider."""
         if self._llm is None:
-            self._llm = ChatOpenAI(
+            self._llm = self._create_llm()
+        return self._llm
+
+    def _create_llm(self) -> BaseChatModel:
+        """
+        Create the appropriate LLM instance based on configured provider.
+
+        Returns:
+            LLM instance (ChatOpenAI or ChatAnthropic)
+        """
+        provider = self.settings.llm.provider
+
+        if provider == LLMProvider.ANTHROPIC:
+            llm = ChatAnthropic(
+                model=self.settings.anthropic.model,
+                anthropic_api_key=self.settings.anthropic.api_key,
+                temperature=self.settings.anthropic.temperature,
+                max_tokens=self.settings.anthropic.max_tokens,
+            )
+            self.logger.debug(
+                "Initialized Anthropic LLM",
+                provider="anthropic",
+                model=self.settings.anthropic.model,
+            )
+        else:
+            # Default to OpenAI
+            llm = ChatOpenAI(
                 model=self.settings.openai.model,
                 openai_api_key=self.settings.openai.api_key,
                 temperature=self.settings.openai.temperature,
                 max_tokens=self.settings.openai.max_tokens,
             )
-            self.logger.debug("Initialized LLM", model=self.settings.openai.model)
-        return self._llm
+            self.logger.debug(
+                "Initialized OpenAI LLM",
+                provider="openai",
+                model=self.settings.openai.model,
+            )
+
+        return llm
 
     @property
     def vector_store(self) -> QdrantManager:

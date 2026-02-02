@@ -2,6 +2,7 @@
 Application settings and configuration management using Pydantic Settings.
 """
 
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 
@@ -13,6 +14,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _env_file = Path(__file__).parent.parent.parent / ".env"
 if _env_file.exists():
     load_dotenv(_env_file)
+
+
+class LLMProvider(str, Enum):
+    """Supported LLM providers."""
+
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
+class EmbeddingProvider(str, Enum):
+    """Supported embedding providers."""
+
+    OPENAI = "openai"
+    # Add more providers as needed (e.g., VOYAGE, COHERE)
 
 
 class OpenAISettings(BaseSettings):
@@ -27,6 +42,36 @@ class OpenAISettings(BaseSettings):
     )
     max_tokens: int = Field(default=4096, description="Max tokens for completions")
     temperature: float = Field(default=0.1, description="Temperature for completions")
+
+
+class AnthropicSettings(BaseSettings):
+    """Anthropic API configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="ANTHROPIC_", extra="ignore")
+
+    api_key: str = Field(default="", description="Anthropic API key")
+    model: str = Field(
+        default="claude-sonnet-4-5-20250929", description="Model for chat completions"
+    )
+    max_tokens: int = Field(default=4096, description="Max tokens for completions")
+    temperature: float = Field(default=0.1, description="Temperature for completions")
+
+
+class LLMSettings(BaseSettings):
+    """LLM provider selection settings."""
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    provider: LLMProvider = Field(
+        default=LLMProvider.OPENAI,
+        description="LLM provider to use (openai or anthropic)",
+        validation_alias="LLM_PROVIDER",
+    )
+    embedding_provider: EmbeddingProvider = Field(
+        default=EmbeddingProvider.OPENAI,
+        description="Embedding provider to use",
+        validation_alias="EMBEDDING_PROVIDER",
+    )
 
 
 class QdrantSettings(BaseSettings):
@@ -75,7 +120,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Sub-configurations
+    llm: LLMSettings = Field(default_factory=LLMSettings)
     openai: OpenAISettings = Field(default_factory=OpenAISettings)
+    anthropic: AnthropicSettings = Field(default_factory=AnthropicSettings)
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     temporal: TemporalSettings = Field(default_factory=TemporalSettings)
     minio: MinioSettings = Field(default_factory=MinioSettings)
