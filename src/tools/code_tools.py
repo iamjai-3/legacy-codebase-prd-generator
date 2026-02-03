@@ -29,7 +29,7 @@ def analyze_code_structure(working_directory: str, filepath: str) -> str:
     Returns:
         Formatted analysis of the code structure
     """
-    from src.agentic.tools.file_tools import _validate_path
+    from src.tools.file_tools import _validate_path
     
     is_valid, full_path, error = _validate_path(working_directory, filepath)
     

@@ -13,7 +13,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TaskID, TextColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 from temporalio.client import Client
 
@@ -48,8 +48,18 @@ def generate(
     form_name: str = typer.Option(
         ..., "--form-name", "-f", help="Name of the form to analyze (e.g., le01, ea01)"
     ),
-    zip_path: str | None = typer.Option(None, "--zip-path", "-z", help="Path to code ZIP file (if not provided, loads from MinIO LEGACY_CODEBASE/)"),
-    code_dir: str | None = typer.Option(None, "--code-dir", "-c", help="Path to code directory (if not provided, loads from MinIO LEGACY_CODEBASE/)"),
+    zip_path: str | None = typer.Option(
+        None,
+        "--zip-path",
+        "-z",
+        help="Path to code ZIP file (if not provided, loads from MinIO LEGACY_CODEBASE/)",
+    ),
+    code_dir: str | None = typer.Option(
+        None,
+        "--code-dir",
+        "-c",
+        help="Path to code directory (if not provided, loads from MinIO LEGACY_CODEBASE/)",
+    ),
     output_dir: str = typer.Option("./output", "--output", "-o", help="Output directory"),
     minio_bucket: str | None = typer.Option(None, "--bucket", "-b", help="MinIO bucket name"),
 ):
@@ -65,7 +75,7 @@ def generate(
     Example:
         # Using local ZIP file
         prd-agent generate -f le11 -z ./code.zip -o ./output
-        
+
         # Using MinIO (no -z or -c needed)
         prd-agent generate -f le11 -o ./output
     """
@@ -142,10 +152,6 @@ async def _run_workflow_generation(
             console.print(f"\n[red]Error:[/red] {str(e)}")
             console.print("[yellow]Tip:[/yellow] Make sure Temporal server is running.")
             raise typer.Exit(1)
-
-
-
-
 
 
 @app.command()
@@ -294,103 +300,13 @@ def delete_collection(
                         f"[yellow]⚠[/yellow] No MinIO data found for form '{form_name}' in FORMS/{form_name.upper()}/"
                     )
                     console.print(
-                        f"[dim]Note: If you want to delete the entire bucket, use 'prd-agent delete-bucket'[/dim]"
+                        "[dim]Note: If you want to delete the entire bucket, use 'prd-agent delete-bucket'[/dim]"
                     )
             else:
                 error = result.get("error", "Unknown error")
                 console.print(f"[yellow]⚠[/yellow] MinIO deletion warning: {error}")
         except Exception as e:
             console.print(f"[yellow]⚠[/yellow] Failed to delete MinIO data: {str(e)}")
-
-
-@app.command()
-def migrate_code(
-    form_name: str = typer.Option(
-        ..., "--form-name", "-f", help="Name of the form to migrate (e.g., le01, le07)"
-    ),
-    output_dir: str = typer.Option(
-        "./output/migratedCode", "--output", "-o", help="Output directory for zip files"
-    ),
-):
-    """
-    Migrate codebase from knowledge base to .NET backend and React frontend.
-
-    Generates complete .NET backend and React frontend applications based on
-    the knowledge base context and packages them into separate zip files.
-    After code migration, analyzes database table mappings and stores them
-    in the knowledge base for enhanced context.
-
-    Example:
-        prd-agent migrate-code -f le07 -o ./output/migratedCode
-    """
-    from src.agents.base_agent import AgentContext
-    from src.agents.code_migration_agent import CodeMigrationAgent
-    from src.agents.database_analysis_agent import DatabaseAnalysisAgent
-
-    console.print(
-        Panel.fit(
-            f"[bold blue]Code Migration Agent[/bold blue] - Migrating [green]{form_name}[/green]",
-            border_style="blue",
-        )
-    )
-
-    async def run_migration():
-        context = AgentContext(form_name=form_name)
-        migration_agent = CodeMigrationAgent()
-        db_agent = DatabaseAnalysisAgent()
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            # Step 1: Code Migration
-            task1 = progress.add_task("Migrating codebase...", total=None)
-            migration_result = await migration_agent.analyze(context, output_dir=output_dir)
-
-            if not migration_result.success or not migration_result.data:
-                progress.update(task1, description="Migration failed!")
-                console.print(f"\n[red]✗ Migration failed:[/red] {migration_result.error}")
-                return
-
-            progress.update(task1, description="Code migration complete!")
-
-            # Step 2: Database Analysis
-            task2 = progress.add_task("Analyzing database mappings...", total=None)
-            db_result = await db_agent.analyze(context, db_doc_path=None)
-
-            if db_result.success and db_result.data:
-                progress.update(task2, description="Database analysis complete!")
-                console.print("\n[green]✓ Database analysis successful![/green]")
-            else:
-                progress.update(task2, description="Database analysis failed!")
-                console.print(
-                    f"\n[yellow]⚠ Database analysis failed:[/yellow] {db_result.error}"
-                )
-
-            # Display results
-            console.print("\n[green]✓ Migration successful![/green]\n")
-
-            table = Table(title="Migration Results")
-            table.add_column("Item", style="cyan")
-            table.add_column("Value", style="green")
-
-            table.add_row("Form Name", migration_result.data.form_name)
-            table.add_row("Backend Files", str(len(migration_result.data.backend_files)))
-            table.add_row("Frontend Files", str(len(migration_result.data.frontend_files)))
-            table.add_row("Backend Zip", migration_result.data.backend_zip_path)
-            table.add_row("Frontend Zip", migration_result.data.frontend_zip_path)
-            table.add_row("Execution Time", f"{migration_result.execution_time_ms:.2f}ms")
-
-            if db_result.success and db_result.data:
-                table.add_row("", "")  # Separator
-                table.add_row("Database Tables Analyzed", str(db_result.data.tables_analyzed))
-                table.add_row("Relationships Mapped", str(db_result.data.relationships_mapped))
-                table.add_row("Vectors Stored", str(db_result.data.vectors_stored))
-
-            console.print(table)
-
-    asyncio.run(run_migration())
 
 
 @app.command()
@@ -531,9 +447,8 @@ def delete_bucket(
     Example:
         prd-agent delete-bucket --bucket metadatas --yes
     """
-    from src.utils.minio_sync import MinioSync
-
     from src.config.settings import get_settings
+    from src.utils.minio_sync import MinioSync
 
     bucket_name = bucket or get_settings().minio.bucket
 
@@ -571,12 +486,8 @@ def migrate_agentic(
     output_dir: str = typer.Option(
         "./output/agentic", "--output", "-o", help="Output directory for generated code"
     ),
-    prompt: str | None = typer.Option(
-        None, "--prompt", "-p", help="Custom migration prompt"
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable verbose output"
-    ),
+    prompt: str | None = typer.Option(None, "--prompt", "-p", help="Custom migration prompt"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
 ):
     """
     Migrate legacy codebase using the agentic AI system.
@@ -592,8 +503,8 @@ def migrate_agentic(
         prd-agent migrate-agentic -f le11 -o ./output/agentic
         prd-agent migrate-agentic -f le11 --verbose
     """
-    from pathlib import Path
-    from src.agentic import get_migration_orchestrator, AgenticConfig
+    from src.core.agentic import AgenticConfig
+    from src.core.migration import get_migration_orchestrator
 
     console.print(
         Panel.fit(
@@ -602,64 +513,66 @@ def migrate_agentic(
         )
     )
 
-    console.print(f"\n[dim]Using Anthropic Claude for reasoning[/dim]")
+    console.print("\n[dim]Using Anthropic Claude for reasoning[/dim]")
     console.print(f"[dim]Output directory: {output_dir}[/dim]\n")
 
     async def run_agentic_migration():
         MigrationOrchestrator = get_migration_orchestrator()
-        
+
         # Configure the agent
         config = AgenticConfig(
             working_directory=Path(output_dir),
             verbose=verbose,
             max_iterations=50,
         )
-        
+
         # Create the orchestrator
         orchestrator = MigrationOrchestrator(
             form_name=form_name,
             output_dir=Path(output_dir),
             config=config,
         )
-        
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
             task = progress.add_task("Running agentic migration...", total=None)
-            
+
             try:
                 result = await orchestrator.migrate(prompt)
                 progress.update(task, description="Migration complete!")
-                
+
             except Exception as e:
                 progress.update(task, description="Migration failed!")
                 console.print(f"\n[red]✗ Migration error:[/red] {str(e)}")
                 raise typer.Exit(1)
-        
+
         # Display result
         console.print("\n[green]✓ Agentic migration complete![/green]\n")
-        console.print(Panel(
-            result[:2000] + "..." if len(result) > 2000 else result,
-            title="Agent Response",
-            border_style="green",
-        ))
-        
+        console.print(
+            Panel(
+                result[:2000] + "..." if len(result) > 2000 else result,
+                title="Agent Response",
+                border_style="green",
+            )
+        )
+
         # Show generated files
         output_path = Path(output_dir)
         if output_path.exists():
             table = Table(title="Generated Files")
             table.add_column("Directory", style="cyan")
             table.add_column("Files", style="green")
-            
+
             for subdir in ["backend", "frontend"]:
                 subdir_path = output_path / subdir
                 if subdir_path.exists():
                     files = list(subdir_path.rglob("*"))
                     file_count = len([f for f in files if f.is_file()])
                     table.add_row(subdir, str(file_count))
-            
+
             console.print(table)
 
     asyncio.run(run_agentic_migration())

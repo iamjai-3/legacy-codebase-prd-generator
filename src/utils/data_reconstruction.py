@@ -26,7 +26,7 @@ def reconstruct_screenshot_analysis(data: dict[str, Any] | None, form_name: str)
     if not data or not data.get("success"):
         return None
 
-    from src.agents.screenshot_analysis_agent import (
+    from src.core.prd.screenshot_analysis_agent import (
         ScreenAnalysis,
         ScreenshotAnalysisResult,
         UIElement,
@@ -83,7 +83,7 @@ def reconstruct_requirements_analysis(data: dict[str, Any] | None, form_name: st
     if not data or not data.get("success"):
         return None
 
-    from src.agents.requirements_generator_agent import (
+    from src.core.prd.requirements_generator_agent import (
         APISpecification,
         BusinessLogic,
         DatabaseMapping,
@@ -296,7 +296,7 @@ def reconstruct_user_flow_analysis(data: dict[str, Any] | None, form_name: str) 
     if not data or not data.get("success"):
         return None
 
-    from src.agents.user_flow_agent import (
+    from src.core.prd.user_flow_agent import (
         UserFlow,
         UserFlowResult,
         UserFlowStep,

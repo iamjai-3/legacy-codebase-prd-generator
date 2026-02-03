@@ -6,11 +6,10 @@ Analyzes screenshots and generates React components.
 """
 
 from pathlib import Path
-from typing import Any
 
-from src.agentic.agentic_base import AgenticAgent, AgenticConfig
-from src.agentic.tool_registry import ToolParameter
-from src.agentic.tools import minio_tools, file_tools, code_tools
+from src.core.agentic.agentic_base import AgenticAgent, AgenticConfig
+from src.core.agentic.tool_registry import ToolParameter
+from src.tools import code_tools, file_tools, minio_tools
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -98,11 +97,11 @@ Match the legacy UI as closely as possible while using modern React patterns.
 class UIMigrationAgent(AgenticAgent):
     """
     Specialized agent for UI migration tasks.
-    
+
     Generates React components from legacy Java Swing UI
     based on screenshot analysis.
     """
-    
+
     def __init__(
         self,
         form_name: str,
@@ -111,7 +110,7 @@ class UIMigrationAgent(AgenticAgent):
     ) -> None:
         """
         Initialize the UI migration agent.
-        
+
         Args:
             form_name: Name of the form
             output_dir: Output directory for generated components
@@ -119,17 +118,17 @@ class UIMigrationAgent(AgenticAgent):
         """
         self.form_name = form_name
         self.output_dir = Path(output_dir)
-        
+
         if config is None:
             config = AgenticConfig()
         config.working_directory = self.output_dir
-        
+
         super().__init__(
             name="UIMigrationAgent",
             system_prompt=UI_SYSTEM_PROMPT,
             config=config,
         )
-    
+
     def _register_default_tools(self) -> None:
         """Register UI-specific tools."""
         # Screenshot tools
@@ -139,14 +138,14 @@ class UIMigrationAgent(AgenticAgent):
             parameters=[],
             function=lambda **kwargs: minio_tools.list_screenshots(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="get_form_docs",
             description="Get form documentation including field descriptions.",
             parameters=[],
             function=lambda **kwargs: minio_tools.get_form_docs(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="search_codebase",
             description="Search for UI-related code and validation rules.",
@@ -163,7 +162,7 @@ class UIMigrationAgent(AgenticAgent):
                 kwargs["query"],
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_code_context",
             description="Get code context for UI patterns.",
@@ -180,7 +179,7 @@ class UIMigrationAgent(AgenticAgent):
                 kwargs["query"],
             ),
         )
-        
+
         # File tools
         self.tool_registry.register(
             name="write_file",
@@ -205,7 +204,7 @@ class UIMigrationAgent(AgenticAgent):
                 kwargs["content"],
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_files_info",
             description="List files in a directory.",
@@ -222,7 +221,7 @@ class UIMigrationAgent(AgenticAgent):
                 kwargs.get("directory", "."),
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_file_content",
             description="Read a file's content.",
@@ -239,16 +238,16 @@ class UIMigrationAgent(AgenticAgent):
                 kwargs["filepath"],
             ),
         )
-    
+
     async def generate_components(self) -> str:
         """
         Generate React components from screenshots.
-        
+
         Returns:
             Summary of generated components
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         prompt = f"""
 Generate React TypeScript components for form '{self.form_name}'.
 
@@ -266,5 +265,5 @@ Make sure to:
 - Use proper TypeScript types
 - Include CSS styling
 """
-        
+
         return await self.send_message(prompt)

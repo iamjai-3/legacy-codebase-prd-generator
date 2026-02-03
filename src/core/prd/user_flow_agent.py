@@ -8,7 +8,7 @@ including user journeys, entry/exit points, and flow diagrams.
 from dataclasses import dataclass
 from typing import Any
 
-from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
+from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
 from src.prompts.user_flow import UserFlowPrompts
 from src.utils.logging_config import ExecutionTimer
 from src.utils.serialization import extract_json_array

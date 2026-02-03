@@ -9,7 +9,7 @@ API specifications, and data models for legacy system migration.
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
+from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
 from src.extractors.code_extractor import CodeFile
 from src.prompts.requirements import RequirementsPrompts
 from src.utils.business_logic_extractor import extract_business_logic_summary

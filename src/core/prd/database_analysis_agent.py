@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
+from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
 from src.prompts.database_analysis import DatabaseAnalysisPrompts
 from src.utils.logging_config import ExecutionTimer, get_logger
 from src.utils.serialization import extract_json_object

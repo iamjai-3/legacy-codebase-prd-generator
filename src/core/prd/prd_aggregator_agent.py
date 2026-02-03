@@ -14,10 +14,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
-from src.agents.requirements_generator_agent import RequirementsGeneratorResult
-from src.agents.screenshot_analysis_agent import ScreenshotAnalysisResult
-from src.agents.user_flow_agent import UserFlowResult
+from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
+from src.core.prd.requirements_generator_agent import RequirementsGeneratorResult
+from src.core.prd.screenshot_analysis_agent import ScreenshotAnalysisResult
+from src.core.prd.user_flow_agent import UserFlowResult
 from src.prompts.prd_aggregator import PRDAggregatorPrompts
 from src.utils.logging_config import ExecutionTimer
 

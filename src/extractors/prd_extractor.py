@@ -10,7 +10,6 @@ to build a comprehensive knowledge base for migration.
 import base64
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from src.config.settings import get_settings
 from src.utils.logging_config import get_logger
@@ -99,7 +98,6 @@ class PRDExtractor:
             self._minio_sync = MinioSync(bucket=self.minio_bucket)
         return self._minio_sync
 
-
     def extract_existing_prd(self, form_name: str) -> ExistingPRD | None:
         """
         Extract all PRD documentation for a form from MinIO only.
@@ -118,7 +116,9 @@ class PRDExtractor:
             if existing_prd:
                 return existing_prd
         except Exception as e:
-            logger.error(f"Failed to extract from MinIO: {e}", form_name=form_name, bucket=self.minio_bucket)
+            logger.error(
+                f"Failed to extract from MinIO: {e}", form_name=form_name, bucket=self.minio_bucket
+            )
             return None
 
         logger.info(f"No existing PRD found in MinIO for {form_name}", bucket=self.minio_bucket)
@@ -161,7 +161,9 @@ class PRDExtractor:
                         section_count=content.count("## ") + content.count("# "),
                     )
                     documents.append(document)
-                    logger.debug("Extracted document from MinIO", filename=filename, doc_type=doc_type)
+                    logger.debug(
+                        "Extracted document from MinIO", filename=filename, doc_type=doc_type
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to read document {obj_name} from MinIO: {e}")
 
@@ -172,7 +174,9 @@ class PRDExtractor:
                 ext = Path(obj_name).suffix.lower()
                 if ext in self.IMAGE_EXTENSIONS:
                     try:
-                        image_data = self.minio_sync.get_file_content(obj_name, bucket=self.minio_bucket)
+                        image_data = self.minio_sync.get_file_content(
+                            obj_name, bucket=self.minio_bucket
+                        )
                         base64_data = base64.b64encode(image_data).decode("utf-8")
                         filename = Path(obj_name).name
                         description = self._filename_to_description(Path(obj_name).stem)
@@ -223,7 +227,6 @@ class PRDExtractor:
         )
 
         return existing_prd
-
 
     def _determine_document_type(self, filename: str, form_name: str) -> str:
         """Determine the document type from filename."""
@@ -284,4 +287,3 @@ class PRDExtractor:
             combined_parts.append(header + doc.content)
 
         return "\n".join(combined_parts)
-

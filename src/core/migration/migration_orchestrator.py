@@ -7,17 +7,16 @@ a complete modern codebase from legacy code and documentation.
 """
 
 from pathlib import Path
-from typing import Any
 
-from src.agentic.agentic_base import AgenticAgent, AgenticConfig
-from src.agentic.tool_registry import ToolParameter
-from src.agentic.tools import (
-    file_tools,
+from src.core.agentic.agentic_base import AgenticAgent, AgenticConfig
+from src.core.agentic.tool_registry import ToolParameter
+from src.tools import (
     code_tools,
+    database_knowledge_tool,
     database_tools,
+    file_tools,
     minio_tools,
 )
-from src.agentic.tools import database_knowledge_tool
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -107,11 +106,11 @@ Be thorough and methodical. The quality of the migration depends on knowledge co
 class MigrationOrchestrator(AgenticAgent):
     """
     Orchestrates the complete migration workflow.
-    
+
     This agent coordinates the migration from legacy Java codebase
     to modern .NET backend and React frontend.
     """
-    
+
     def __init__(
         self,
         form_name: str,
@@ -120,7 +119,7 @@ class MigrationOrchestrator(AgenticAgent):
     ) -> None:
         """
         Initialize the migration orchestrator.
-        
+
         Args:
             form_name: Name of the form to migrate (e.g., 'LE11')
             output_dir: Output directory for generated code
@@ -128,24 +127,24 @@ class MigrationOrchestrator(AgenticAgent):
         """
         self.form_name = form_name
         self.output_dir = Path(output_dir)
-        
+
         # Update config with output directory as working directory
         if config is None:
             config = AgenticConfig()
         config.working_directory = self.output_dir
-        
+
         super().__init__(
             name="MigrationOrchestrator",
             system_prompt=MIGRATION_SYSTEM_PROMPT,
             config=config,
         )
-        
+
         self.logger.info(
-            f"Initialized MigrationOrchestrator",
+            "Initialized MigrationOrchestrator",
             form_name=form_name,
             output_dir=str(output_dir),
         )
-    
+
     def _register_default_tools(self) -> None:
         """Register all tools needed for migration."""
         # File tools
@@ -162,11 +161,10 @@ class MigrationOrchestrator(AgenticAgent):
                 ),
             ],
             function=lambda **kwargs: file_tools.get_files_info(
-                str(self.output_dir), 
-                kwargs.get("directory", ".")
+                str(self.output_dir), kwargs.get("directory", ".")
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_file_content",
             description="Read the contents of a file.",
@@ -179,11 +177,10 @@ class MigrationOrchestrator(AgenticAgent):
                 ),
             ],
             function=lambda **kwargs: file_tools.get_file_content(
-                str(self.output_dir), 
-                kwargs["filepath"]
+                str(self.output_dir), kwargs["filepath"]
             ),
         )
-        
+
         self.tool_registry.register(
             name="write_file",
             description="Write content to a file. Creates parent directories if needed.",
@@ -202,12 +199,10 @@ class MigrationOrchestrator(AgenticAgent):
                 ),
             ],
             function=lambda **kwargs: file_tools.write_file(
-                str(self.output_dir),
-                kwargs["filepath"],
-                kwargs["content"]
+                str(self.output_dir), kwargs["filepath"], kwargs["content"]
             ),
         )
-        
+
         self.tool_registry.register(
             name="find_files",
             description="Find files matching a pattern.",
@@ -232,7 +227,7 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs.get("directory", "."),
             ),
         )
-        
+
         # Code analysis tools
         self.tool_registry.register(
             name="search_codebase",
@@ -258,7 +253,7 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs.get("limit", 10),
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_code_context",
             description="Get relevant code context for a specific topic.",
@@ -282,7 +277,7 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs.get("doc_type"),
             ),
         )
-        
+
         # Database tools
         self.tool_registry.register(
             name="get_database_schema",
@@ -290,7 +285,7 @@ class MigrationOrchestrator(AgenticAgent):
             parameters=[],
             function=lambda **kwargs: database_tools.get_database_schema(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="get_table_mappings",
             description="Get table relationships and mappings.",
@@ -307,7 +302,7 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs.get("table_name"),
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_business_logic",
             description="Get business logic related to a topic.",
@@ -324,7 +319,7 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs["topic"],
             ),
         )
-        
+
         # MinIO tools
         self.tool_registry.register(
             name="get_form_docs",
@@ -332,28 +327,28 @@ class MigrationOrchestrator(AgenticAgent):
             parameters=[],
             function=lambda **kwargs: minio_tools.get_form_docs(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="get_dependencies",
             description="Get the list of files that belong to this form.",
             parameters=[],
             function=lambda **kwargs: minio_tools.get_dependencies(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="list_screenshots",
             description="List available UI screenshots for the form.",
             parameters=[],
             function=lambda **kwargs: minio_tools.list_screenshots(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="get_db_prd",
             description="Get global database PRD documentation.",
             parameters=[],
             function=lambda **kwargs: minio_tools.get_db_prd(),
         )
-        
+
         self.tool_registry.register(
             name="get_conversion_prompt",
             description="Get the conversion prompt template for backend or frontend.",
@@ -366,11 +361,9 @@ class MigrationOrchestrator(AgenticAgent):
                     enum=["backend", "frontend"],
                 ),
             ],
-            function=lambda **kwargs: minio_tools.get_conversion_prompt(
-                kwargs["prompt_type"]
-            ),
+            function=lambda **kwargs: minio_tools.get_conversion_prompt(kwargs["prompt_type"]),
         )
-        
+
         # NEW: Enhanced MinIO knowledge tools
         self.tool_registry.register(
             name="get_all_form_knowledge",
@@ -378,14 +371,14 @@ class MigrationOrchestrator(AgenticAgent):
             parameters=[],
             function=lambda **kwargs: minio_tools.get_all_form_knowledge(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="list_export_templates",
             description="List all available BE/FE export code templates.",
             parameters=[],
             function=lambda **kwargs: minio_tools.list_export_templates(),
         )
-        
+
         self.tool_registry.register(
             name="get_export_template",
             description="Get a specific export template from EXPORT_CODEBASE_PRD.",
@@ -409,14 +402,14 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs["template_name"],
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_ui_flow_docs",
             description="Get UI flow documentation for understanding user interactions.",
             parameters=[],
             function=lambda **kwargs: minio_tools.get_ui_flow_docs(self.form_name),
         )
-        
+
         # NEW: Database knowledge tools
         self.tool_registry.register(
             name="search_legacy_schema",
@@ -433,7 +426,7 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs["table_name"]
             ),
         )
-        
+
         self.tool_registry.register(
             name="search_target_schema",
             description="Search for target (Lumina) table schema and relationships.",
@@ -449,21 +442,21 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs["table_name"]
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_oracle_to_postgres_mapping",
             description="Get Oracle to PostgreSQL data type mapping guide.",
             parameters=[],
             function=lambda **kwargs: database_knowledge_tool.get_oracle_to_postgres_mapping(),
         )
-        
+
         self.tool_registry.register(
             name="get_highly_connected_tables",
             description="Get list of highly connected tables (20+ relationships) - critical for migration.",
             parameters=[],
             function=lambda **kwargs: database_knowledge_tool.get_highly_connected_tables(),
         )
-        
+
         self.tool_registry.register(
             name="get_table_relationships",
             description="Get relationships for a specific table.",
@@ -479,24 +472,24 @@ class MigrationOrchestrator(AgenticAgent):
                 kwargs["table_name"]
             ),
         )
-    
+
     async def migrate(self, prompt: str | None = None) -> str:
         """
         Run the migration process.
-        
+
         Args:
             prompt: Optional custom prompt to guide the migration
-            
+
         Returns:
             Migration result summary
         """
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Create output structure
         (self.output_dir / "backend").mkdir(exist_ok=True)
         (self.output_dir / "frontend").mkdir(exist_ok=True)
-        
+
         # Build the migration prompt
         if prompt:
             migration_prompt = prompt
@@ -544,5 +537,5 @@ Using the frontend conversion template format:
 
 START by calling `get_all_form_knowledge` to gather knowledge.
 """
-        
+
         return await self.send_message(migration_prompt)

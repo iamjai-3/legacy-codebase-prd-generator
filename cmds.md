@@ -118,38 +118,39 @@ prd-agent generate \
 
 ---
 
-## 5. Code Migration
+## 5. Code Migration (Agentic AI System)
 
-### Basic Migration
+### Basic Migration with Agentic AI
+
+The agentic AI system works like Antigravity IDE, using Anthropic Claude for reasoning:
 
 ```bash
-prd-agent migrate-code \
+prd-agent migrate-agentic \
   --form-name le11 \
-  --output ./output/migratedCode
+  --output ./output/agentic
 ```
 
-### Regenerate Knowledge Base Before Migration
-
-If migration output is missing business logic, regenerate the knowledge base:
+### With Verbose Output
 
 ```bash
-prd-agent generate \
+prd-agent migrate-agentic \
   --form-name le11 \
-  --recreate-vectors \
-  --output ./output
+  --output ./output/agentic \
+  --verbose
 ```
 
-Then run migration:
+### With Custom Prompt
 
 ```bash
-prd-agent migrate-code \
+prd-agent migrate-agentic \
   --form-name le11 \
-  --output ./output/migratedCode
+  --output ./output/agentic \
+  --prompt "Focus on database entities and API endpoints"
 ```
 
 ### Knowledge Base Components
 
-The migration uses a unified knowledge base built from:
+The agentic migration system uses a unified knowledge base built from:
 
 | Source       | Location                               | Content                                        | Doc Type                 |
 | ------------ | -------------------------------------- | ---------------------------------------------- | ------------------------ |
@@ -162,16 +163,16 @@ The migration uses a unified knowledge base built from:
 ### Migration Output Structure
 
 ```
-output/migratedCode/
-├── {form_name}_backend.zip
-│   └── FleetManagement/
-│       ├── FleetManagement.API/        # ASP.NET Core API
-│       ├── FleetManagement.Business/   # Business logic & services
-│       ├── FleetManagement.Data/       # EF Core entities & repos
-│       └── FleetManagement.Common/     # Shared models & utils
+output/agentic/
+├── backend/
+│   └── {FormName}Management/
+│       ├── {FormName}Management.API/        # ASP.NET Core API
+│       ├── {FormName}Management.Business/   # Business logic & services
+│       ├── {FormName}Management.Data/       # EF Core entities & repos
+│       └── {FormName}Management.Common/     # Shared models & utils
 │
-└── {form_name}_frontend.zip
-    └── fleet-management/
+└── frontend/
+    └── {form-name}-management/
         ├── src/
         │   ├── components/             # React components
         │   ├── pages/                  # Page components
@@ -180,7 +181,7 @@ output/migratedCode/
         └── package.json
 ```
 
-**Note:** Run `generate` first to populate the knowledge base, then run `migrate-code`.
+**Note:** Run `generate` first to populate the knowledge base, then run `migrate-agentic`.
 
 ---
 
@@ -453,8 +454,8 @@ prd-agent generate -f le11 -o ./output
 # Generate PRD (with local ZIP)
 prd-agent generate -f le11 -z ./code.zip -o ./output
 
-# Migrate code
-prd-agent migrate-code -f le11 -o ./output/migratedCode
+# Migrate code with agentic AI
+prd-agent migrate-agentic -f le11 -o ./output/agentic
 
 # Search knowledge base
 prd-agent search -f le11 -q "validation rules"
@@ -462,6 +463,3 @@ prd-agent search -f le11 -q "validation rules"
 # Delete collection
 prd-agent delete-collection -f le11 --yes
 ```
-
-prd-agent migrate-code -f le11 -o ./output/migratedCode
-prd-agent migrate-agentic --form-name le11 --output ./output/agentic

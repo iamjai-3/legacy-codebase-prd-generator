@@ -8,7 +8,7 @@ from legacy application screenshots.
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.agents.base_agent import AgentContext, AgentResult, BaseAgent
+from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
 from src.extractors.minio_extractor import MinioExtractor, Screenshot
 from src.prompts.screenshot_analysis import ScreenshotAnalysisPrompts
 from src.utils.logging_config import ExecutionTimer

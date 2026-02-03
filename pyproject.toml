@@ -35,8 +35,9 @@ dependencies = [
     # Temporal Workflow
     "temporalio>=1.9.0",
     
-    # OpenAI
+    # AI Providers
     "openai>=1.59.5",
+    "anthropic>=0.40.0",
     
     # Minio Storage
     "minio>=7.2.12",

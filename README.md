@@ -257,39 +257,52 @@ Combines all analyses into:
 ```
 PRD_Agent/
 ├── src/
-│   ├── agents/                 # Specialized AI agents
-│   │   ├── base_agent.py
-│   │   ├── screenshot_analysis_agent.py
-│   │   ├── atlassian_integration_agent.py
-│   │   ├── requirements_generator_agent.py
-│   │   ├── user_flow_agent.py
-│   │   ├── risk_analysis_agent.py
-│   │   └── prd_aggregator_agent.py
-│   ├── extractors/             # Data extraction modules
+│   ├── core/                        # Core functionality
+│   │   ├── prd/                     # PRD Generation agents
+│   │   │   ├── base_agent.py
+│   │   │   ├── screenshot_analysis_agent.py
+│   │   │   ├── requirements_generator_agent.py
+│   │   │   ├── user_flow_agent.py
+│   │   │   ├── database_analysis_agent.py
+│   │   │   └── prd_aggregator_agent.py
+│   │   ├── migration/               # Code migration agents
+│   │   │   ├── migration_orchestrator.py
+│   │   │   ├── code_generation_agent.py
+│   │   │   ├── ui_migration_agent.py
+│   │   │   └── db_migration_agent.py
+│   │   └── agentic/                 # Agentic AI framework
+│   │       ├── agentic_base.py      # Base agent class
+│   │       ├── agent_runner.py      # Orchestration
+│   │       ├── message_history.py   # Conversation management
+│   │       └── tool_registry.py     # Tool registration
+│   ├── tools/                       # Agent tools
+│   │   ├── file_tools.py
+│   │   ├── code_tools.py
+│   │   ├── database_tools.py
+│   │   ├── database_knowledge_tool.py
+│   │   └── minio_tools.py
+│   ├── extractors/                  # Data extraction
 │   │   ├── code_extractor.py
 │   │   ├── minio_extractor.py
-│   │   └── jira_extractor.py
-│   ├── workflows/              # Temporal workflows
-│   │   ├── activities.py
+│   │   └── prd_extractor.py
+│   ├── workflows/                   # Temporal workflows
+│   │   ├── activities/
 │   │   └── prd_generation_workflow.py
-│   ├── vector_store/           # Qdrant integration
+│   ├── vector_store/                # Qdrant knowledge base
 │   │   ├── embeddings.py
 │   │   └── qdrant_manager.py
-│   ├── generators/             # PRD generation
-│   │   └── prd_generator.py
-│   ├── cli/                    # CLI commands
+│   ├── cli/                         # CLI commands
 │   │   └── commands.py
-│   ├── worker/                 # Temporal worker
+│   ├── worker/                      # Temporal worker
 │   │   └── temporal_worker.py
-│   ├── config/                 # Configuration
+│   ├── config/                      # Configuration
 │   │   └── settings.py
-│   └── utils/                  # Utilities
-│       ├── file_utils.py
-│       └── logging_config.py
-├── tests/                      # Test suite
-├── docker-compose.yml          # Infrastructure
-├── requirements.txt            # Dependencies
-└── pyproject.toml             # Project config
+│   ├── prompts/                     # LLM prompts
+│   └── utils/                       # Utilities
+├── tests/                           # Test suite
+├── docker-compose.yml               # Infrastructure
+├── requirements.txt                 # Dependencies
+└── pyproject.toml                   # Project config
 ```
 
 ## 📂 MinIO Folder Structure
@@ -340,14 +353,14 @@ prd-agent search -f le11 -q "table schema" --type database
 
 ## 🔄 Code Migration
 
-After generating the PRD and knowledge base, migrate to modern frameworks:
+After generating the PRD and knowledge base, migrate to modern frameworks using the agentic AI system:
 
 ```bash
 # Generate PRD and build knowledge base
 prd-agent generate -f le11 -o ./output
 
-# Migrate to .NET + React
-prd-agent migrate-code -f le11 -o ./output/migratedCode
+# Migrate to .NET + React using agentic AI (like Antigravity IDE)
+prd-agent migrate-agentic -f le11 -o ./output/agentic
 ```
 
 ### Migration Output

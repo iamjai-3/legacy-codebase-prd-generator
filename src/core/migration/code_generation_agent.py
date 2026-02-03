@@ -6,11 +6,10 @@ Generates .NET services, controllers, and preserves all business rules.
 """
 
 from pathlib import Path
-from typing import Any
 
-from src.agentic.agentic_base import AgenticAgent, AgenticConfig
-from src.agentic.tool_registry import ToolParameter
-from src.agentic.tools import database_tools, minio_tools, file_tools, code_tools
+from src.core.agentic.agentic_base import AgenticAgent, AgenticConfig
+from src.core.agentic.tool_registry import ToolParameter
+from src.tools import code_tools, database_tools, file_tools, minio_tools
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -106,11 +105,11 @@ Preserve ALL business logic from the legacy system. Every validation, calculatio
 class CodeGenerationAgent(AgenticAgent):
     """
     Specialized agent for backend code generation.
-    
+
     Generates .NET Core services and controllers while
     preserving all business logic from legacy Java code.
     """
-    
+
     def __init__(
         self,
         form_name: str,
@@ -119,7 +118,7 @@ class CodeGenerationAgent(AgenticAgent):
     ) -> None:
         """
         Initialize the code generation agent.
-        
+
         Args:
             form_name: Name of the form
             output_dir: Output directory for generated code
@@ -127,17 +126,17 @@ class CodeGenerationAgent(AgenticAgent):
         """
         self.form_name = form_name
         self.output_dir = Path(output_dir)
-        
+
         if config is None:
             config = AgenticConfig()
         config.working_directory = self.output_dir
-        
+
         super().__init__(
             name="CodeGenerationAgent",
             system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
             config=config,
         )
-    
+
     def _register_default_tools(self) -> None:
         """Register code generation tools."""
         # Code analysis tools
@@ -164,7 +163,7 @@ class CodeGenerationAgent(AgenticAgent):
                 kwargs.get("limit", 10),
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_code_context",
             description="Get relevant code context for a topic.",
@@ -188,7 +187,7 @@ class CodeGenerationAgent(AgenticAgent):
                 kwargs.get("doc_type"),
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_business_logic",
             description="Get business logic for a specific topic.",
@@ -205,7 +204,7 @@ class CodeGenerationAgent(AgenticAgent):
                 kwargs["topic"],
             ),
         )
-        
+
         # MinIO tools
         self.tool_registry.register(
             name="get_form_docs",
@@ -213,21 +212,21 @@ class CodeGenerationAgent(AgenticAgent):
             parameters=[],
             function=lambda **kwargs: minio_tools.get_form_docs(self.form_name),
         )
-        
+
         self.tool_registry.register(
             name="get_conversion_prompt",
             description="Get the backend conversion prompt template.",
             parameters=[],
             function=lambda **kwargs: minio_tools.get_conversion_prompt("backend"),
         )
-        
+
         self.tool_registry.register(
             name="get_dependencies",
             description="Get the list of legacy files belonging to this form.",
             parameters=[],
             function=lambda **kwargs: minio_tools.get_dependencies(self.form_name),
         )
-        
+
         # File tools
         self.tool_registry.register(
             name="write_file",
@@ -252,7 +251,7 @@ class CodeGenerationAgent(AgenticAgent):
                 kwargs["content"],
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_files_info",
             description="List files in a directory.",
@@ -269,7 +268,7 @@ class CodeGenerationAgent(AgenticAgent):
                 kwargs.get("directory", "."),
             ),
         )
-        
+
         self.tool_registry.register(
             name="get_file_content",
             description="Read a file's content.",
@@ -286,16 +285,16 @@ class CodeGenerationAgent(AgenticAgent):
                 kwargs["filepath"],
             ),
         )
-    
+
     async def generate_services(self) -> str:
         """
         Generate .NET services with business logic.
-        
+
         Returns:
             Summary of generated services
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
+
         prompt = f"""
 Generate .NET Core backend services for form '{self.form_name}'.
 
@@ -313,5 +312,5 @@ Critical requirements:
 - Every calculation must be accurate
 - Every workflow must be preserved
 """
-        
+
         return await self.send_message(prompt)

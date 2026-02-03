@@ -4,8 +4,8 @@ from typing import Any
 
 from temporalio import activity
 
-from src.agents.base_agent import AgentContext
-from src.agents.prd_aggregator_agent import PRDAggregatorAgent
+from src.core.prd.base_agent import AgentContext
+from src.core.prd.prd_aggregator_agent import PRDAggregatorAgent
 from src.utils.data_reconstruction import (
     reconstruct_requirements_analysis,
     reconstruct_screenshot_analysis,

@@ -4,11 +4,11 @@ from typing import Any
 
 from temporalio import activity
 
-from src.agents.base_agent import AgentContext
-from src.agents.database_analysis_agent import DatabaseAnalysisAgent
-from src.agents.requirements_generator_agent import RequirementsGeneratorAgent
-from src.agents.screenshot_analysis_agent import ScreenshotAnalysisAgent
-from src.agents.user_flow_agent import UserFlowAgent
+from src.core.prd.base_agent import AgentContext
+from src.core.prd.database_analysis_agent import DatabaseAnalysisAgent
+from src.core.prd.requirements_generator_agent import RequirementsGeneratorAgent
+from src.core.prd.screenshot_analysis_agent import ScreenshotAnalysisAgent
+from src.core.prd.user_flow_agent import UserFlowAgent
 from src.utils.data_reconstruction import reconstruct_code_files, reconstruct_screenshots
 from src.utils.logging_config import get_logger
 from src.workflows.activities.common import to_dict
