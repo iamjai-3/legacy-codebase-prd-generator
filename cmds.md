@@ -462,3 +462,6 @@ prd-agent search -f le11 -q "validation rules"
 # Delete collection
 prd-agent delete-collection -f le11 --yes
 ```
+
+prd-agent migrate-code -f le11 -o ./output/migratedCode
+prd-agent migrate-agentic --form-name le11 --output ./output/agentic

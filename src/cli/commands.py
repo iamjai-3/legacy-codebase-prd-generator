@@ -564,6 +564,108 @@ def delete_bucket(
 
 
 @app.command()
+def migrate_agentic(
+    form_name: str = typer.Option(
+        ..., "--form-name", "-f", help="Name of the form to migrate (e.g., le11, ea01)"
+    ),
+    output_dir: str = typer.Option(
+        "./output/agentic", "--output", "-o", help="Output directory for generated code"
+    ),
+    prompt: str | None = typer.Option(
+        None, "--prompt", "-p", help="Custom migration prompt"
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable verbose output"
+    ),
+):
+    """
+    Migrate legacy codebase using the agentic AI system.
+
+    This command uses an AI agent that works like Antigravity IDE to:
+    1. Read form documentation and dependencies from MinIO
+    2. Search the vector knowledge base for business logic
+    3. Generate complete .NET backend and React frontend code
+
+    The agent uses Anthropic Claude for reasoning and OpenAI for embeddings.
+
+    Example:
+        prd-agent migrate-agentic -f le11 -o ./output/agentic
+        prd-agent migrate-agentic -f le11 --verbose
+    """
+    from pathlib import Path
+    from src.agentic import get_migration_orchestrator, AgenticConfig
+
+    console.print(
+        Panel.fit(
+            f"[bold blue]Agentic Migration[/bold blue] - Migrating [green]{form_name}[/green]",
+            border_style="blue",
+        )
+    )
+
+    console.print(f"\n[dim]Using Anthropic Claude for reasoning[/dim]")
+    console.print(f"[dim]Output directory: {output_dir}[/dim]\n")
+
+    async def run_agentic_migration():
+        MigrationOrchestrator = get_migration_orchestrator()
+        
+        # Configure the agent
+        config = AgenticConfig(
+            working_directory=Path(output_dir),
+            verbose=verbose,
+            max_iterations=50,
+        )
+        
+        # Create the orchestrator
+        orchestrator = MigrationOrchestrator(
+            form_name=form_name,
+            output_dir=Path(output_dir),
+            config=config,
+        )
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Running agentic migration...", total=None)
+            
+            try:
+                result = await orchestrator.migrate(prompt)
+                progress.update(task, description="Migration complete!")
+                
+            except Exception as e:
+                progress.update(task, description="Migration failed!")
+                console.print(f"\n[red]✗ Migration error:[/red] {str(e)}")
+                raise typer.Exit(1)
+        
+        # Display result
+        console.print("\n[green]✓ Agentic migration complete![/green]\n")
+        console.print(Panel(
+            result[:2000] + "..." if len(result) > 2000 else result,
+            title="Agent Response",
+            border_style="green",
+        ))
+        
+        # Show generated files
+        output_path = Path(output_dir)
+        if output_path.exists():
+            table = Table(title="Generated Files")
+            table.add_column("Directory", style="cyan")
+            table.add_column("Files", style="green")
+            
+            for subdir in ["backend", "frontend"]:
+                subdir_path = output_path / subdir
+                if subdir_path.exists():
+                    files = list(subdir_path.rglob("*"))
+                    file_count = len([f for f in files if f.is_file()])
+                    table.add_row(subdir, str(file_count))
+            
+            console.print(table)
+
+    asyncio.run(run_agentic_migration())
+
+
+@app.command()
 def version():
     """Show version information."""
     from src import __version__
