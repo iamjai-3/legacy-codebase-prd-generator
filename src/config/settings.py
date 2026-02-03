@@ -114,6 +114,28 @@ class MinioSettings(BaseSettings):
     secure: bool = Field(default=False, description="Use HTTPS")
 
 
+class CacheSettings(BaseSettings):
+    """PostgreSQL cache configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")
+
+    enabled: bool = Field(default=True, description="Enable caching")
+    host: str = Field(default="localhost", description="PostgreSQL host")
+    port: int = Field(default=5432, description="PostgreSQL port")
+    database: str = Field(default="temporal", description="Database name")
+    user: str = Field(default="temporal", description="Database user")
+    password: str = Field(default="temporal", description="Database password")
+
+    # Cache TTL settings (in seconds)
+    llm_response_ttl: int = Field(default=86400, description="LLM response cache TTL (1 day)")
+    vector_search_ttl: int = Field(default=3600, description="Vector search cache TTL (1 hour)")
+    tool_result_ttl: int = Field(default=1800, description="Tool result cache TTL (30 min)")
+
+    # Cache behavior
+    max_cache_size_mb: int = Field(default=500, description="Max cache size in MB")
+    cleanup_interval: int = Field(default=3600, description="Cleanup interval in seconds")
+
+
 class Settings(BaseSettings):
     """Main application settings aggregating all configuration."""
 
@@ -126,6 +148,7 @@ class Settings(BaseSettings):
     qdrant: QdrantSettings = Field(default_factory=QdrantSettings)
     temporal: TemporalSettings = Field(default_factory=TemporalSettings)
     minio: MinioSettings = Field(default_factory=MinioSettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
 
     # Application settings
     log_level: str = Field(default="INFO", description="Logging level")

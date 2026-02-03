@@ -579,6 +579,78 @@ def migrate_agentic(
 
 
 @app.command()
+def cache_stats():
+    """Show cache statistics."""
+    import asyncio
+
+    from src.utils.cache_manager import get_cache_manager
+
+    async def get_stats():
+        cache = await get_cache_manager()
+        stats = await cache.get_stats()
+
+        if not stats.get("enabled"):
+            console.print("[yellow]Cache is disabled[/yellow]")
+            return
+
+        table = Table(title="Cache Statistics")
+        table.add_column("Cache Type", style="cyan")
+        table.add_column("Total Entries", style="green")
+        table.add_column("Active Entries", style="blue")
+        table.add_column("Total Hits", style="yellow")
+        table.add_column("Avg Hits", style="magenta")
+
+        for stat in stats.get("by_type", []):
+            table.add_row(
+                stat["cache_type"],
+                str(stat["total_entries"]),
+                str(stat["active_entries"]),
+                str(stat["total_hits"]),
+                f"{stat['avg_hits']:.2f}",
+            )
+
+        console.print(table)
+
+    asyncio.run(get_stats())
+
+
+@app.command()
+def cache_clear(
+    cache_type: str = typer.Option(
+        None, "--type", "-t", help="Cache type to clear (llm_response, vector_search, tool_result)"
+    ),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    """Clear cache entries."""
+    import asyncio
+
+    from src.utils.cache_manager import CacheType, get_cache_manager
+
+    if not confirm:
+        type_msg = f" for type '{cache_type}'" if cache_type else ""
+        if not typer.confirm(f"Are you sure you want to clear cache{type_msg}?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    async def clear_cache():
+        cache = await get_cache_manager()
+
+        if cache_type:
+            try:
+                ct = CacheType(cache_type)
+                await cache.clear(ct)
+                console.print(f"[green]✓[/green] Cleared {cache_type} cache")
+            except ValueError:
+                console.print(f"[red]Invalid cache type:[/red] {cache_type}")
+                console.print("Valid types: llm_response, vector_search, tool_result")
+        else:
+            await cache.clear()
+            console.print("[green]✓[/green] All cache cleared")
+
+    asyncio.run(clear_cache())
+
+
+@app.command()
 def version():
     """Show version information."""
     from src import __version__
