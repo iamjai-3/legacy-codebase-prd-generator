@@ -24,12 +24,12 @@ class AgenticConfig:
     # Working directory boundary for file operations
     working_directory: Path = field(default_factory=lambda: Path.cwd())
 
-    # Maximum iterations for the agent loop
-    max_iterations: int = 50
+    # Maximum iterations for the agent loop (lowered to reduce token cost)
+    max_iterations: int = 25
 
     # Model configuration
     model: str = "claude-sonnet-4-5-20250929"
-    max_tokens: int = 8192
+    max_tokens: int = 4096
     temperature: float = 0.0
 
     # Verbose mode for debugging

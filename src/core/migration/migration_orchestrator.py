@@ -270,11 +270,19 @@ class MigrationOrchestrator(AgenticAgent):
                     description="Type filter: code, business_logic, database, etc.",
                     required=False,
                 ),
+                ToolParameter(
+                    name="limit",
+                    type="integer",
+                    description="Max number of context chunks (default 3 to reduce tokens)",
+                    required=False,
+                    default=3,
+                ),
             ],
             function=lambda **kwargs: code_tools.get_code_context(
                 self.form_name,
                 kwargs["query"],
                 kwargs.get("doc_type"),
+                kwargs.get("limit", 3),
             ),
         )
 

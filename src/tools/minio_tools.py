@@ -355,9 +355,9 @@ def get_all_form_knowledge(form_name: str, bucket: str | None = None) -> str:
         output.append("\n## 1. Form Documentation\n")
         docs = get_form_docs(form_name, bucket)
         if "Error" not in docs:
-            # Truncate if too long
-            if len(docs) > 10000:
-                docs = docs[:10000] + "\n\n[... truncated for brevity ...]"
+            # Truncate if too long (reduced from 10k to lower token usage)
+            if len(docs) > 6000:
+                docs = docs[:6000] + "\n\n[... truncated for brevity ...]"
             output.append(docs)
         else:
             output.append(f"Not available: {docs}\n")

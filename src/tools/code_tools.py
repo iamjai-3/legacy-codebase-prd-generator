@@ -320,6 +320,11 @@ def search_codebase(form_name: str, query: str, limit: int = 10) -> str:
         return f"Error searching codebase: {str(e)}"
 
 
+# Per-chunk cap to keep total context within tool result limit (~5k tokens)
+# 5 chunks × 4000 chars = 20k chars, matching TOOL_RESULT_MAX_CHARS in agent_runner
+CODE_CONTEXT_CHUNK_MAX_CHARS = 4000
+
+
 def get_code_context(
     form_name: str,
     query: str,
@@ -336,7 +341,7 @@ def get_code_context(
         limit: Maximum number of context chunks
 
     Returns:
-        Formatted context for use in prompts
+        Formatted context for use in prompts (each chunk capped to reduce token usage)
     """
     try:
         manager = QdrantManager()
@@ -362,8 +367,12 @@ def get_code_context(
             if result.metadata:
                 source = result.metadata.get("file_path", result.metadata.get("source", "unknown"))
 
+            content = result.content
+            if len(content) > CODE_CONTEXT_CHUNK_MAX_CHARS:
+                content = content[:CODE_CONTEXT_CHUNK_MAX_CHARS] + "\n\n[... truncated ...]"
+
             lines.append(f"[Context {i}] Source: {source}")
-            lines.append(result.content)
+            lines.append(content)
             lines.append("")
 
         return "\n".join(lines)

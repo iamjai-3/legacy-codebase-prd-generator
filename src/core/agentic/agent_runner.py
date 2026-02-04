@@ -99,14 +99,16 @@ class AgentRunner:
         """
         config = self.agent.config
 
-        # Check token estimate and truncate if needed
-        max_context_tokens = 180000  # Leave headroom for response
+        # Check token estimate and truncate if needed (proactive to reduce cost)
+        max_context_tokens = 100000
         estimated_tokens = self.agent.message_history.estimated_tokens
 
         if estimated_tokens > max_context_tokens:
-            self.logger.warning(f"Context too large ({estimated_tokens} tokens). Truncating...")
-            # Keep only recent messages
-            self.agent.message_history.truncate_to_recent(max_messages=10)
+            self.logger.warning(
+                "Context too large (%s tokens). Truncating to recent messages.",
+                estimated_tokens,
+            )
+            self.agent.message_history.truncate_to_recent(max_messages=20)
 
         # Build the API request
         messages = self.agent.message_history.to_anthropic_messages()
@@ -129,6 +131,12 @@ class AgentRunner:
             tools=tools if tools else None,
         )
 
+        # Always log token usage for cost monitoring
+        self.logger.info(
+            "Claude usage: input_tokens=%s output_tokens=%s",
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+        )
         if config.verbose:
             self.logger.debug(
                 "Claude response",
