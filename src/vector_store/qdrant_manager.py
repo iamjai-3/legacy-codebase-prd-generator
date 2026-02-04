@@ -233,6 +233,30 @@ class QdrantManager:
         document = Document(page_content=text, metadata=doc_metadata)
         return self.add_documents(form_name, [document])
 
+    def _build_search_filter(self, filter_metadata: dict[str, Any] | None) -> models.Filter | None:
+        """Build Qdrant filter from metadata dict; returns None if empty or no filter."""
+        if not filter_metadata:
+            return None
+        conditions = [
+            models.FieldCondition(key=f"metadata.{key}", match=models.MatchValue(value=value))
+            for key, value in filter_metadata.items()
+        ]
+        return models.Filter(must=conditions) if conditions else None
+
+    def _point_to_search_result(self, point: Any) -> SearchResult:
+        """Convert a Qdrant ScoredPoint to SearchResult."""
+        payload = point.payload if hasattr(point, "payload") else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        score = point.score if hasattr(point, "score") else 0.0
+        point_id = point.id if hasattr(point, "id") else None
+        return SearchResult(
+            content=payload.get("content", ""),
+            metadata=payload.get("metadata", {}),
+            score=float(score) if score else 0.0,
+            document_id=str(point_id) if point_id else "",
+        )
+
     def search(
         self,
         form_name: str,
@@ -255,70 +279,20 @@ class QdrantManager:
             List of search results
         """
         collection_name = self.get_collection_name(form_name)
-
-        # Generate query embedding
         query_embedding = self.embedding_service.embed_text_sync(query)
+        query_filter = self._build_search_filter(filter_metadata)
 
-        # Build filter if provided
-        query_filter = None
-        if filter_metadata:
-            conditions = []
-            for key, value in filter_metadata.items():
-                # Support both direct metadata keys and nested metadata keys
-                if key == "doc_type" or key == "chunk_type":
-                    # These are stored in metadata.doc_type or metadata.chunk_type
-                    conditions.append(
-                        models.FieldCondition(
-                            key=f"metadata.{key}", 
-                            match=models.MatchValue(value=value)
-                        )
-                    )
-                else:
-                    # Other metadata fields
-                    conditions.append(
-                        models.FieldCondition(
-                            key=f"metadata.{key}", 
-                            match=models.MatchValue(value=value)
-                        )
-                    )
-            if conditions:
-                query_filter = models.Filter(must=conditions)
-
-        # Perform search using query_points (newer API)
-        # query_points accepts query as a list of floats (the embedding vector)
         query_response = self.client.query_points(
             collection_name=collection_name,
-            query=query_embedding,  # Direct vector as list of floats
+            query=query_embedding,
             limit=limit,
             score_threshold=score_threshold,
             query_filter=query_filter,
             with_payload=True,
             with_vectors=False,
         )
-        # Extract the points from the QueryResponse
-        results = query_response.points if hasattr(query_response, "points") else []
-
-        # Convert to SearchResult objects
-        # query_points returns ScoredPoint objects with id, score, and payload
-        search_results = []
-        for point in results:
-            # Extract data from ScoredPoint
-            payload = point.payload if hasattr(point, "payload") else {}
-            score = point.score if hasattr(point, "score") else 0.0
-            point_id = point.id if hasattr(point, "id") else None
-
-            # Handle payload - it should be a dict
-            if not isinstance(payload, dict):
-                payload = {}
-
-            search_results.append(
-                SearchResult(
-                    content=payload.get("content", ""),
-                    metadata=payload.get("metadata", {}),
-                    score=float(score) if score else 0.0,
-                    document_id=str(point_id) if point_id else "",
-                )
-            )
+        points = query_response.points if hasattr(query_response, "points") else []
+        search_results = [self._point_to_search_result(p) for p in points]
 
         logger.info(
             "Search completed",
@@ -326,7 +300,6 @@ class QdrantManager:
             query_length=len(query),
             results=len(search_results),
         )
-
         return search_results
 
     def get_vector_store(self, form_name: str) -> QdrantVectorStore:

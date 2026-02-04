@@ -214,6 +214,9 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
     NO_CODE_AVAILABLE = "No code available."
     NO_CODE_FOUND = "No code files available for analysis."
 
+    # Path patterns for prioritizing main form / support code files
+    PATH_PATTERN_OPTIONS_LE = "options/le"
+
     def __init__(self) -> None:
         """Initialize the requirements generator agent."""
         super().__init__("RequirementsGeneratorAgent")
@@ -437,7 +440,10 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             main_form_files = [
                 cf
                 for cf in code_files
-                if any(p in cf.path.lower() for p in ["options/le", "cschapter", "support.java"])
+                if any(
+                    p in cf.path.lower()
+                    for p in [self.PATH_PATTERN_OPTIONS_LE, "cschapter", "support.java"]
+                )
             ]
 
             for cf in main_form_files[:5]:
@@ -852,6 +858,116 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
 
         return source_tables
 
+    @staticmethod
+    def _query_type_from_sql(sql: str) -> str:
+        """Infer query type from SQL text."""
+        upper = sql.upper()
+        if "INSERT" in upper:
+            return "INSERT"
+        if "UPDATE" in upper:
+            return "UPDATE"
+        if "DELETE" in upper:
+            return "DELETE"
+        return "SELECT"
+
+    def _build_field_mappings_from_columns(self, columns: list[str]) -> list[dict[str, Any]]:
+        """Build field mapping dicts from extracted column names."""
+        return [
+            {
+                "java_field": col,
+                "java_type": "String",
+                "column_name": col,
+                "column_type": "VARCHAR2",
+                "annotations": [],
+                "validation": "",
+            }
+            for col in columns
+        ]
+
+    def _build_queries_from_sql(
+        self, sql_queries: list[str], source_path: str
+    ) -> list[dict[str, Any]]:
+        """Build query dicts from extracted SQL strings."""
+        return [
+            {
+                "name": f"{self._query_type_from_sql(sql).lower()}Query",
+                "type": self._query_type_from_sql(sql),
+                "sql_or_jpql": sql[:200],
+                "purpose": f"Extracted from {source_path}",
+            }
+            for sql in sql_queries
+        ]
+
+    def _build_database_mapping_from_file(
+        self, cf: CodeFile, file_refs: dict[str, Any]
+    ) -> DatabaseMapping | None:
+        """Build one DatabaseMapping from a code file and its parsed refs, or None if empty."""
+        field_mappings = self._build_field_mappings_from_columns(file_refs.get("columns", []))
+        queries = self._build_queries_from_sql(file_refs.get("sql_queries", []), cf.path)
+        if not field_mappings and not queries:
+            return None
+        entity_class = cf.classes[0] if cf.classes else cf.path.split("/")[-1].replace(".java", "")
+        table_name = ", ".join(file_refs["tables"]) if file_refs.get("tables") else "N/A"
+        return DatabaseMapping(
+            entity_class=entity_class,
+            table_name=table_name,
+            field_mappings=field_mappings,
+            relationships=[],
+            queries=queries,
+        )
+
+    def _extract_mappings_from_java(
+        self, code_files: list[CodeFile], context: AgentContext
+    ) -> list[DatabaseMapping]:
+        """Extract entity-to-table mappings from Java code (PRIORITY 1)."""
+        java_refs = extract_table_references_from_java(code_files)
+        self.logger.info(
+            f"Extracted {len(java_refs['tables'])} table refs, "
+            f"{len(java_refs['columns'])} field codes from Java",
+            form_name=context.form_name,
+        )
+        main_files = [cf for cf in code_files if cf.file_type in ["source", "form_definition"]]
+        parser = SQLDDLParser()
+        mappings: list[DatabaseMapping] = []
+        for cf in main_files:
+            if cf.language != "java":
+                continue
+            file_refs = parser.parse_java_code_for_tables(cf.content)
+            if not file_refs.get("tables") and not file_refs.get("columns"):
+                continue
+            mapping = self._build_database_mapping_from_file(cf, file_refs)
+            if mapping:
+                mappings.append(mapping)
+        return mappings
+
+    async def _extract_mappings_via_llm(
+        self,
+        context: AgentContext,
+        code_files: list[CodeFile] | None,
+        kb_contexts: dict[str, list[str]],
+    ) -> list[DatabaseMapping]:
+        """Use LLM to extract database mappings when code-based extraction is insufficient."""
+        model_code = self._get_model_code(code_files)
+        if model_code == self.NO_CODE_AVAILABLE:
+            return []
+        kb_context = self.format_context_for_prompt(
+            kb_contexts.get("database_mapping", []) + kb_contexts.get("database", []),
+            max_contexts=8,
+        )
+        prompt = RequirementsPrompts.database_mappings(context.form_name, model_code, kb_context)
+        data = extract_json_array(await self.invoke_llm(context, prompt))
+        return [
+            DatabaseMapping(
+                entity_class=r.get("entity_class", ""),
+                table_name=r.get("table_name", ""),
+                field_mappings=r.get("field_mappings", []),
+                relationships=r.get("relationships", []),
+                queries=r.get("queries", []),
+            )
+            for r in data
+            if r.get("entity_class") and r.get("table_name")
+        ]
+
     async def _extract_database_mappings(
         self,
         context: AgentContext,
@@ -861,109 +977,11 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         """Extract entity-to-table mappings from code.
 
         Uses SQL parser to extract ACTUAL table references from Java code.
+        Falls back to LLM when few mappings are found.
         """
-        mappings: list[DatabaseMapping] = []
-
-        # PRIORITY 1: Extract actual table/column references from Java code
-        if code_files:
-            java_refs = extract_table_references_from_java(code_files)
-
-            self.logger.info(
-                f"Extracted {len(java_refs['tables'])} table refs, "
-                f"{len(java_refs['columns'])} field codes from Java",
-                form_name=context.form_name,
-            )
-
-            # Group by main Java files (options files)
-            main_files = [cf for cf in code_files if cf.file_type in ["source", "form_definition"]]
-
-            for cf in main_files:
-                if cf.language != "java":
-                    continue
-
-                # Extract references from this specific file
-                parser = SQLDDLParser()
-                file_refs = parser.parse_java_code_for_tables(cf.content)
-
-                if file_refs["tables"] or file_refs["columns"]:
-                    # Build field mappings from extracted field codes
-                    field_mappings = []
-                    for col in file_refs["columns"]:
-                        field_mappings.append(
-                            {
-                                "java_field": col,
-                                "java_type": "String",  # Default, would need annotation parsing
-                                "column_name": col,
-                                "column_type": "VARCHAR2",  # Default
-                                "annotations": [],
-                                "validation": "",
-                            }
-                        )
-
-                    # Build queries from extracted SQL
-                    queries = []
-                    for sql in file_refs["sql_queries"]:
-                        query_type = "SELECT"
-                        if "INSERT" in sql.upper():
-                            query_type = "INSERT"
-                        elif "UPDATE" in sql.upper():
-                            query_type = "UPDATE"
-                        elif "DELETE" in sql.upper():
-                            query_type = "DELETE"
-
-                        queries.append(
-                            {
-                                "name": f"{query_type.lower()}Query",
-                                "type": query_type,
-                                "sql_or_jpql": sql[:200],  # Truncate long queries
-                                "purpose": f"Extracted from {cf.path}",
-                            }
-                        )
-
-                    if field_mappings or queries:
-                        mappings.append(
-                            DatabaseMapping(
-                                entity_class=(
-                                    cf.classes[0]
-                                    if cf.classes
-                                    else cf.path.split("/")[-1].replace(".java", "")
-                                ),
-                                table_name=(
-                                    ", ".join(file_refs["tables"]) if file_refs["tables"] else "N/A"
-                                ),
-                                field_mappings=field_mappings,
-                                relationships=[],
-                                queries=queries,
-                            )
-                        )
-
-        # PRIORITY 2: Use LLM only if we have good context and few mappings
+        mappings = self._extract_mappings_from_java(code_files, context) if code_files else []
         if len(mappings) < 2:
-            model_code = self._get_model_code(code_files)
-            kb_context = self.format_context_for_prompt(
-                kb_contexts.get("database_mapping", []) + kb_contexts.get("database", []),
-                max_contexts=8,
-            )
-
-            if model_code != self.NO_CODE_AVAILABLE:
-                prompt = RequirementsPrompts.database_mappings(
-                    context.form_name, model_code, kb_context
-                )
-                data = extract_json_array(await self.invoke_llm(context, prompt))
-
-                # Only add LLM-generated mappings that reference actual code
-                for r in data:
-                    if r.get("entity_class") and r.get("table_name"):
-                        mappings.append(
-                            DatabaseMapping(
-                                entity_class=r.get("entity_class", ""),
-                                table_name=r.get("table_name", ""),
-                                field_mappings=r.get("field_mappings", []),
-                                relationships=r.get("relationships", []),
-                                queries=r.get("queries", []),
-                            )
-                        )
-
+            mappings += await self._extract_mappings_via_llm(context, code_files, kb_contexts)
         return mappings
 
     def _get_model_code(self, code_files: list[CodeFile] | None) -> str:
@@ -1212,7 +1230,7 @@ Be specific to this module, not generic."""
         Prioritizes main form files and includes more content for accurate extraction.
         """
         if not code_files:
-            return "No code available."
+            return self.NO_CODE_AVAILABLE
 
         logic_keywords = [
             "if ",
@@ -1236,7 +1254,12 @@ Be specific to this module, not generic."""
         ]
 
         # Prioritize main form and support files
-        priority_patterns = ["options/le", "csChapter", "Support.java", "Service.java"]
+        priority_patterns = [
+            self.PATH_PATTERN_OPTIONS_LE,
+            "csChapter",
+            "Support.java",
+            "Service.java",
+        ]
 
         priority_files = []
         other_files = []
@@ -1264,7 +1287,7 @@ Be specific to this module, not generic."""
     def _get_service_code(self, code_files: list[CodeFile] | None) -> str:
         """Get service/controller layer code."""
         if not code_files:
-            return "No code available."
+            return self.NO_CODE_AVAILABLE
 
         service_files = [
             cf
@@ -1314,7 +1337,7 @@ Be specific to this module, not generic."""
     def _extract_validation_code(self, code_files: list[CodeFile] | None) -> str:
         """Extract code snippets containing validation logic."""
         if not code_files:
-            return "No code available."
+            return self.NO_CODE_AVAILABLE
 
         # Enhanced keywords to capture Java Swing validation patterns
         keywords = [
@@ -1342,7 +1365,7 @@ Be specific to this module, not generic."""
         ]
 
         # Prioritize main form files
-        priority_patterns = ["options/le", "Support.java", "Combo.java"]
+        priority_patterns = [self.PATH_PATTERN_OPTIONS_LE, "Support.java", "Combo.java"]
         priority_files = []
         other_files = []
 
@@ -1367,7 +1390,7 @@ Be specific to this module, not generic."""
     def _extract_workflow_code(self, code_files: list[CodeFile] | None) -> str:
         """Extract workflow/state machine code."""
         if not code_files:
-            return "No code available."
+            return self.NO_CODE_AVAILABLE
 
         keywords = ["state", "status", "workflow", "transition", "approve", "reject", "process"]
         snippets = []
@@ -1381,7 +1404,7 @@ Be specific to this module, not generic."""
     def _get_integration_code(self, code_files: list[CodeFile] | None) -> str:
         """Get integration-related code."""
         if not code_files:
-            return "No code available."
+            return self.NO_CODE_AVAILABLE
 
         keywords = ["client", "api", "integration", "http", "rest", "soap", "external"]
         integration_files = [

@@ -76,7 +76,7 @@ public class VehicleService : IVehicleService
     {
         // Validate business rules
         await ValidateVehicleNumber(request.VehicleNumber);
-        
+
         var vehicle = new Vehicle
         {
             VehicleNumber = request.VehicleNumber,

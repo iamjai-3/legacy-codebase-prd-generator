@@ -352,20 +352,20 @@ def parse_sql_files(code_files: list[Any]) -> list[ParsedTable]:
         path = getattr(cf, "path", "") or ""
         if path in processed_paths:
             continue
-        
+
         content = getattr(cf, "content", "") or ""
         language = getattr(cf, "language", "") or ""
-        
+
         # Check if this is a SQL file by:
         # 1. Language attribute is 'sql'
         # 2. File path ends with .sql
         # 3. Content contains CREATE TABLE
         is_sql_file = (
-            language.lower() == "sql" 
+            language.lower() == "sql"
             or path.lower().endswith(".sql")
             or "CREATE TABLE" in content.upper()
         )
-        
+
         if is_sql_file and content:
             tables = parser.parse_create_table(content, path)
             if tables:

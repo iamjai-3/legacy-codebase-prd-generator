@@ -51,6 +51,17 @@ class Message:
     timestamp: datetime = field(default_factory=datetime.now)
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def _anthropic_tool_result_content(self, tr: ToolResult) -> Any:
+        """Normalize tool result content for Anthropic API."""
+        return tr.content if isinstance(tr.content, str) else str(tr.content)
+
+    def _anthropic_content_blocks_with_text(self) -> list[dict[str, Any]]:
+        """Build content blocks list, prepending text block if present."""
+        blocks: list[dict[str, Any]] = []
+        if self.content and isinstance(self.content, str) and self.content.strip():
+            blocks.append({"type": "text", "text": self.content})
+        return blocks
+
     def to_anthropic_message(self) -> dict[str, Any]:
         """
         Convert to Anthropic API message format.
@@ -59,85 +70,67 @@ class Message:
             Dict compatible with Anthropic messages API
         """
         if self.role == MessageRole.SYSTEM:
-            # System messages are handled separately in Anthropic
             return {"role": "user", "content": self.content}
-
-        # Handle multiple tool results (from parallel tool calls)
         if self.role == MessageRole.TOOL and self.tool_results:
-            return {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": tr.tool_use_id,
-                        "content": tr.content,
-                        "is_error": tr.is_error,
-                    }
-                    for tr in self.tool_results
-                ],
-            }
-
-        # Handle single tool result (legacy)
+            return self._to_anthropic_tool_results_multi()
         if self.role == MessageRole.TOOL and self.tool_result:
-            return {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": self.tool_result.tool_use_id,
-                        "content": (
-                            self.tool_result.content
-                            if isinstance(self.tool_result.content, str)
-                            else str(self.tool_result.content)
-                        ),
-                        "is_error": self.tool_result.is_error,
-                    }
-                ],
-            }
-
-        # Handle multiple tool uses (parallel tool calls)
+            return self._to_anthropic_tool_result_single()
         if self.role == MessageRole.ASSISTANT and self.tool_uses:
-            content_blocks = []
-            # Add text first if present
-            if self.content and isinstance(self.content, str) and self.content.strip():
-                content_blocks.append({"type": "text", "text": self.content})
-            # Add all tool uses
-            for tu in self.tool_uses:
-                content_blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": tu.id,
-                        "name": tu.name,
-                        "input": tu.input,
-                    }
-                )
-            return {
-                "role": "assistant",
-                "content": content_blocks,
-            }
-
-        # Handle single tool use (legacy)
+            return self._to_anthropic_assistant_tool_uses()
         if self.role == MessageRole.ASSISTANT and self.tool_use:
-            content_blocks = []
-            if self.content and isinstance(self.content, str) and self.content.strip():
-                content_blocks.append({"type": "text", "text": self.content})
-            content_blocks.append(
-                {
-                    "type": "tool_use",
-                    "id": self.tool_use.id,
-                    "name": self.tool_use.name,
-                    "input": self.tool_use.input,
-                }
-            )
-            return {
-                "role": "assistant",
-                "content": content_blocks,
-            }
+            return self._to_anthropic_assistant_tool_use()
+        return {"role": self.role.value, "content": self.content}
 
+    def _to_anthropic_tool_results_multi(self) -> dict[str, Any]:
+        """Anthropic message for multiple tool results (parallel tool calls)."""
         return {
-            "role": self.role.value,
-            "content": self.content,
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tr.tool_use_id,
+                    "content": tr.content,
+                    "is_error": tr.is_error,
+                }
+                for tr in self.tool_results
+            ],
         }
+
+    def _to_anthropic_tool_result_single(self) -> dict[str, Any]:
+        """Anthropic message for a single tool result (legacy)."""
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": self.tool_result.tool_use_id,
+                    "content": self._anthropic_tool_result_content(self.tool_result),
+                    "is_error": self.tool_result.is_error,
+                }
+            ],
+        }
+
+    def _to_anthropic_assistant_tool_uses(self) -> dict[str, Any]:
+        """Anthropic message for assistant with multiple tool uses (parallel)."""
+        content_blocks = self._anthropic_content_blocks_with_text()
+        for tu in self.tool_uses:
+            content_blocks.append(
+                {"type": "tool_use", "id": tu.id, "name": tu.name, "input": tu.input}
+            )
+        return {"role": "assistant", "content": content_blocks}
+
+    def _to_anthropic_assistant_tool_use(self) -> dict[str, Any]:
+        """Anthropic message for assistant with single tool use (legacy)."""
+        content_blocks = self._anthropic_content_blocks_with_text()
+        content_blocks.append(
+            {
+                "type": "tool_use",
+                "id": self.tool_use.id,
+                "name": self.tool_use.name,
+                "input": self.tool_use.input,
+            }
+        )
+        return {"role": "assistant", "content": content_blocks}
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize message to dictionary for persistence."""

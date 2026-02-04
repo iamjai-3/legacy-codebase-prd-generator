@@ -18,14 +18,15 @@ from rich.table import Table
 from temporalio.client import Client
 
 from src.config.settings import get_settings
-
-settings = get_settings()
 from src.utils.logging_config import get_logger, setup_logging
 from src.vector_store.qdrant_manager import QdrantManager
 from src.workflows.prd_generation_workflow import (
     PRDGenerationInput,
     PRDGenerationWorkflow,
 )
+
+settings = get_settings()
+
 
 app = typer.Typer(
     name="prd-agent",
@@ -35,6 +36,10 @@ app = typer.Typer(
 
 console = Console()
 logger = get_logger(__name__)
+
+PROGRESS_DESCRIPTION_TEMPLATE = "[progress.description]{task.description}"
+HELP_SKIP_CONFIRMATION = "Skip confirmation"
+HELP_MINIO_BUCKET = "MinIO bucket name (defaults to configured bucket)"
 
 
 @app.callback()
@@ -109,7 +114,7 @@ async def _run_workflow_generation(
 
     with Progress(
         SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
+        TextColumn(PROGRESS_DESCRIPTION_TEMPLATE),
         console=console,
     ) as progress:
         task = progress.add_task("Connecting to Temporal...", total=None)
@@ -246,16 +251,59 @@ def stats(
     console.print(table)
 
 
+def _confirm_delete_collection(form_name: str, delete_minio: bool, confirm: bool) -> bool:
+    """Return True if the user confirmed (or already passed -y)."""
+    if confirm:
+        return True
+    confirm_msg = f"Are you sure you want to delete the collection for '{form_name}'?"
+    if delete_minio:
+        confirm_msg += "\nThis will also delete all MinIO data for this form."
+    if not typer.confirm(confirm_msg):
+        console.print("[yellow]Cancelled.[/yellow]")
+        return False
+    return True
+
+
+def _delete_minio_form_data_and_report(form_name: str, bucket: str | None) -> None:
+    """Delete MinIO form data for the given form and print result to console."""
+    from src.utils.minio_sync import MinioSync
+
+    try:
+        sync = MinioSync(bucket=bucket)
+        result = sync.delete_form_data(form_name, bucket=bucket)
+        _print_minio_delete_result(form_name, result)
+    except Exception as e:
+        console.print(f"[yellow]⚠[/yellow] Failed to delete MinIO data: {str(e)}")
+
+
+def _print_minio_delete_result(form_name: str, result: dict) -> None:
+    """Print MinIO delete result messages to console."""
+    if not result.get("success"):
+        error = result.get("error", "Unknown error")
+        console.print(f"[yellow]⚠[/yellow] MinIO deletion warning: {error}")
+        return
+    deleted_count = result.get("deleted_count", 0)
+    if deleted_count > 0:
+        console.print(
+            f"[green]✓[/green] MinIO data for '{form_name}' deleted ({deleted_count} objects)."
+        )
+    else:
+        console.print(
+            f"[yellow]⚠[/yellow] No MinIO data found for form '{form_name}' in FORMS/{form_name.upper()}/"
+        )
+        console.print(
+            "[dim]Note: If you want to delete the entire bucket, use 'prd-agent delete-bucket'[/dim]"
+        )
+
+
 @app.command()
 def delete_collection(
     form_name: str = typer.Option(..., "--form-name", "-f", help="Form name to delete"),
-    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help=HELP_SKIP_CONFIRMATION),
     delete_minio: bool = typer.Option(
         True, "--delete-minio/--no-delete-minio", help="Also delete MinIO form data"
     ),
-    bucket: str = typer.Option(
-        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
-    ),
+    bucket: str = typer.Option(None, "--bucket", "-b", help=HELP_MINIO_BUCKET),
 ):
     """
     Delete a vector collection and optionally MinIO form data.
@@ -264,14 +312,8 @@ def delete_collection(
     - Qdrant vector collection for the form
     - MinIO form data (FORMS/{FORM_NAME}/*) if --delete-minio is set
     """
-    if not confirm:
-        confirm_msg = f"Are you sure you want to delete the collection for '{form_name}'?"
-        if delete_minio:
-            confirm_msg += "\nThis will also delete all MinIO data for this form."
-        confirm = typer.confirm(confirm_msg)
-        if not confirm:
-            console.print("[yellow]Cancelled.[/yellow]")
-            return
+    if not _confirm_delete_collection(form_name, delete_minio, confirm):
+        return
 
     qdrant = QdrantManager()
     success = qdrant.delete_collection(form_name)
@@ -281,39 +323,13 @@ def delete_collection(
     else:
         console.print("[red]✗[/red] Failed to delete collection.")
 
-    # Delete MinIO form data if requested
     if delete_minio:
-        from src.utils.minio_sync import MinioSync
-
-        try:
-            sync = MinioSync(bucket=bucket)
-            result = sync.delete_form_data(form_name, bucket=bucket)
-
-            if result.get("success"):
-                deleted_count = result.get("deleted_count", 0)
-                if deleted_count > 0:
-                    console.print(
-                        f"[green]✓[/green] MinIO data for '{form_name}' deleted ({deleted_count} objects)."
-                    )
-                else:
-                    console.print(
-                        f"[yellow]⚠[/yellow] No MinIO data found for form '{form_name}' in FORMS/{form_name.upper()}/"
-                    )
-                    console.print(
-                        "[dim]Note: If you want to delete the entire bucket, use 'prd-agent delete-bucket'[/dim]"
-                    )
-            else:
-                error = result.get("error", "Unknown error")
-                console.print(f"[yellow]⚠[/yellow] MinIO deletion warning: {error}")
-        except Exception as e:
-            console.print(f"[yellow]⚠[/yellow] Failed to delete MinIO data: {str(e)}")
+        _delete_minio_form_data_and_report(form_name, bucket)
 
 
 @app.command()
 def create_minio_folders(
-    bucket: str = typer.Option(
-        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
-    ),
+    bucket: str = typer.Option(None, "--bucket", "-b", help=HELP_MINIO_BUCKET),
 ):
     """
     Create empty folder structure in MinIO bucket.
@@ -343,7 +359,7 @@ def create_minio_folders(
 
         with Progress(
             SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
+            TextColumn(PROGRESS_DESCRIPTION_TEMPLATE),
             console=console,
         ) as progress:
             task = progress.add_task("Creating folders in MinIO...", total=None)
@@ -372,9 +388,7 @@ def create_minio_folders(
 @app.command()
 def create_form_folders(
     form_name: str = typer.Argument(..., help="Form name (e.g., LE11, le07)"),
-    bucket: str = typer.Option(
-        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
-    ),
+    bucket: str = typer.Option(None, "--bucket", "-b", help=HELP_MINIO_BUCKET),
 ):
     """
     Create folder structure for a specific form in MinIO.
@@ -403,7 +417,7 @@ def create_form_folders(
 
         with Progress(
             SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
+            TextColumn(PROGRESS_DESCRIPTION_TEMPLATE),
             console=console,
         ) as progress:
             task = progress.add_task(f"Creating folders for {form_name.upper()}...", total=None)
@@ -431,10 +445,8 @@ def create_form_folders(
 
 @app.command()
 def delete_bucket(
-    bucket: str = typer.Option(
-        None, "--bucket", "-b", help="MinIO bucket name (defaults to configured bucket)"
-    ),
-    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    bucket: str = typer.Option(None, "--bucket", "-b", help=HELP_MINIO_BUCKET),
+    confirm: bool = typer.Option(False, "--yes", "-y", help=HELP_SKIP_CONFIRMATION),
     force: bool = typer.Option(
         True, "--force/--no-force", help="Delete all objects in bucket before deleting bucket"
     ),
@@ -517,7 +529,7 @@ def migrate_agentic(
     console.print(f"[dim]Output directory: {output_dir}[/dim]\n")
 
     async def run_agentic_migration():
-        MigrationOrchestrator = get_migration_orchestrator()
+        migration_orchestrator = get_migration_orchestrator()
 
         # Configure the agent
         config = AgenticConfig(
@@ -527,7 +539,7 @@ def migrate_agentic(
         )
 
         # Create the orchestrator
-        orchestrator = MigrationOrchestrator(
+        orchestrator = migration_orchestrator(
             form_name=form_name,
             output_dir=Path(output_dir),
             config=config,
@@ -535,7 +547,7 @@ def migrate_agentic(
 
         with Progress(
             SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
+            TextColumn(PROGRESS_DESCRIPTION_TEMPLATE),
             console=console,
         ) as progress:
             task = progress.add_task("Running agentic migration...", total=None)
@@ -619,7 +631,7 @@ def cache_clear(
     cache_type: str = typer.Option(
         None, "--type", "-t", help="Cache type to clear (llm_response, vector_search, tool_result)"
     ),
-    confirm: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help=HELP_SKIP_CONFIRMATION),
 ):
     """Clear cache entries."""
     import asyncio

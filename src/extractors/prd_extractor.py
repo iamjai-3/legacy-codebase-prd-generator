@@ -124,82 +124,71 @@ class PRDExtractor:
         logger.info(f"No existing PRD found in MinIO for {form_name}", bucket=self.minio_bucket)
         return None
 
-    def _extract_from_minio(self, form_name: str) -> ExistingPRD | None:
-        """Extract PRD from MinIO bucket using FORMS/{form_name}/ structure."""
-        form_name_upper = form_name.upper()
-        prefix = f"FORMS/{form_name_upper}/"
-
-        logger.info("Extracting PRD from MinIO", form_name=form_name, prefix=prefix)
-
-        # List all objects for this form
-        objects = self.minio_sync.list_objects(prefix=prefix, bucket=self.minio_bucket)
-
-        if not objects:
-            logger.info(f"No objects found in MinIO for {form_name}")
-            return None
-
-        documents: list[PRDDocument] = []
-        images: list[PRDImage] = []
-
-        # Extract documents from FORM_DOCS/
+    def _extract_documents_from_objects(
+        self, objects: list[str], prefix: str, form_name: str
+    ) -> list[PRDDocument]:
+        """Extract PRD markdown documents from FORM_DOCS/ objects."""
         form_docs_prefix = f"{prefix}FORM_DOCS/"
+        documents: list[PRDDocument] = []
         for obj_name in objects:
-            if obj_name.startswith(form_docs_prefix) and obj_name.endswith((".md", ".markdown")):
-                try:
-                    content = self.minio_sync.get_file_text(obj_name, bucket=self.minio_bucket)
-                    filename = Path(obj_name).name
-                    doc_type = self._determine_document_type(filename, form_name)
-                    title = self._extract_title(content)
+            if not (
+                obj_name.startswith(form_docs_prefix)
+                and obj_name.endswith(tuple(self.MARKDOWN_EXTENSIONS))
+            ):
+                continue
+            try:
+                content = self.minio_sync.get_file_text(obj_name, bucket=self.minio_bucket)
+                filename = Path(obj_name).name
+                doc_type = self._determine_document_type(filename, form_name)
+                title = self._extract_title(content)
+                document = PRDDocument(
+                    path=obj_name,
+                    filename=filename,
+                    content=content,
+                    document_type=doc_type,
+                    title=title,
+                    word_count=len(content.split()),
+                    section_count=content.count("## ") + content.count("# "),
+                )
+                documents.append(document)
+                logger.debug("Extracted document from MinIO", filename=filename, doc_type=doc_type)
+            except Exception as e:
+                logger.warning(f"Failed to read document {obj_name} from MinIO: {e}")
+        return documents
 
-                    document = PRDDocument(
-                        path=obj_name,
-                        filename=filename,
-                        content=content,
-                        document_type=doc_type,
-                        title=title,
-                        word_count=len(content.split()),
-                        section_count=content.count("## ") + content.count("# "),
-                    )
-                    documents.append(document)
-                    logger.debug(
-                        "Extracted document from MinIO", filename=filename, doc_type=doc_type
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to read document {obj_name} from MinIO: {e}")
-
-        # Extract images from UI_SCREENSHOTS/
+    def _extract_images_from_objects(self, objects: list[str], prefix: str) -> list[PRDImage]:
+        """Extract PRD images from UI_SCREENSHOTS/ objects."""
         screenshots_prefix = f"{prefix}UI_SCREENSHOTS/"
+        images: list[PRDImage] = []
         for obj_name in objects:
-            if obj_name.startswith(screenshots_prefix):
-                ext = Path(obj_name).suffix.lower()
-                if ext in self.IMAGE_EXTENSIONS:
-                    try:
-                        image_data = self.minio_sync.get_file_content(
-                            obj_name, bucket=self.minio_bucket
-                        )
-                        base64_data = base64.b64encode(image_data).decode("utf-8")
-                        filename = Path(obj_name).name
-                        description = self._filename_to_description(Path(obj_name).stem)
-                        content_type = self._get_content_type(ext)
+            if not obj_name.startswith(screenshots_prefix):
+                continue
+            ext = Path(obj_name).suffix.lower()
+            if ext not in self.IMAGE_EXTENSIONS:
+                continue
+            try:
+                image_data = self.minio_sync.get_file_content(obj_name, bucket=self.minio_bucket)
+                base64_data = base64.b64encode(image_data).decode("utf-8")
+                filename = Path(obj_name).name
+                description = self._filename_to_description(Path(obj_name).stem)
+                content_type = self._get_content_type(ext)
+                image = PRDImage(
+                    path=obj_name,
+                    filename=filename,
+                    image_data=image_data,
+                    base64_data=base64_data,
+                    content_type=content_type,
+                    description=description,
+                    size=len(image_data),
+                )
+                images.append(image)
+                logger.debug(f"Extracted image from MinIO: {filename}")
+            except Exception as e:
+                logger.warning(f"Failed to read image {obj_name} from MinIO: {e}")
+        return images
 
-                        image = PRDImage(
-                            path=obj_name,
-                            filename=filename,
-                            image_data=image_data,
-                            base64_data=base64_data,
-                            content_type=content_type,
-                            description=description,
-                            size=len(image_data),
-                        )
-                        images.append(image)
-                        logger.debug(f"Extracted image from MinIO: {filename}")
-                    except Exception as e:
-                        logger.warning(f"Failed to read image {obj_name} from MinIO: {e}")
-
-        if not documents and not images:
-            return None
-
-        # Sort documents by type importance
+    def _sort_documents_by_type(self, documents: list[PRDDocument]) -> None:
+        """Sort documents by type importance (description, requirements, sourcetables, prompt)."""
         type_order = ["description", "requirements", "sourcetables", "prompt"]
         documents.sort(
             key=lambda d: (
@@ -209,6 +198,25 @@ class PRDExtractor:
             )
         )
 
+    def _extract_from_minio(self, form_name: str) -> ExistingPRD | None:
+        """Extract PRD from MinIO bucket using FORMS/{form_name}/ structure."""
+        form_name_upper = form_name.upper()
+        prefix = f"FORMS/{form_name_upper}/"
+
+        logger.info("Extracting PRD from MinIO", form_name=form_name, prefix=prefix)
+
+        objects = self.minio_sync.list_objects(prefix=prefix, bucket=self.minio_bucket)
+        if not objects:
+            logger.info(f"No objects found in MinIO for {form_name}")
+            return None
+
+        documents = self._extract_documents_from_objects(objects, prefix, form_name)
+        images = self._extract_images_from_objects(objects, prefix)
+
+        if not documents and not images:
+            return None
+
+        self._sort_documents_by_type(documents)
         combined_content = self._combine_documents(documents)
 
         existing_prd = ExistingPRD(

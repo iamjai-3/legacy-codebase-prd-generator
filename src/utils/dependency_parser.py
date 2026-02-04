@@ -11,6 +11,112 @@ from src.utils.minio_sync import MinioSync
 logger = get_logger(__name__)
 
 
+_PATH_EXTENSIONS = (
+    ".java",
+    ".sql",
+    ".form",
+    ".xml",
+    ".properties",
+    ".py",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+)
+_EXTENSIONS_CODE = (".java", ".sql", ".form")  # subset used for section/path detection
+_PATH_PATTERN = re.compile(
+    r"(?:^|\s)([a-zA-Z0-9_\-./\\]+\.(?:java|sql|form|xml|properties|py|js|ts|cs|tsx|jsx))(?:\s|$)",
+    re.MULTILINE,
+)
+
+
+def _load_dependency_content(minio_sync: MinioSync, object_name: str, form_name: str) -> str | None:
+    """Load dependency file content from MinIO; return None on failure or missing."""
+    try:
+        if not minio_sync.file_exists(object_name, bucket=None):
+            logger.warning(
+                "Dependency file not found in MinIO",
+                form_name=form_name,
+                object_name=object_name,
+                bucket=minio_sync.bucket,
+            )
+            return None
+        content = minio_sync.get_file_text(object_name, bucket=None)
+        logger.info(
+            "Loaded dependency file from MinIO",
+            form_name=form_name,
+            object_name=object_name,
+        )
+        return content
+    except Exception as e:
+        logger.error("Failed to load dependency file from MinIO", form_name=form_name, error=str(e))
+        return None
+
+
+def _should_skip_line(line: str) -> bool:
+    """Return True if line should be skipped (empty, comment, section header)."""
+    if not line or line.startswith("#") or line.startswith("="):
+        return True
+    if line.startswith("-") and not line.endswith(_PATH_EXTENSIONS):
+        return True
+    if line.upper().startswith("SECTION") or line.upper().startswith("END"):
+        return True
+    if line.upper().startswith("EXTERNAL") and "DEPENDENCIES" in line.upper():
+        return True
+    if ":" in line and "/" not in line and not line.endswith(_EXTENSIONS_CODE):
+        return True
+    return False
+
+
+def _normalize_path(path: str) -> str:
+    """Strip quotes, normalize separators, remove leading slash."""
+    p = path.strip().strip("\"'").replace("\\", "/")
+    return p[1:] if p.startswith("/") else p
+
+
+def _extract_paths_from_pattern(line: str) -> list[str]:
+    """Extract and normalize paths from line using path pattern."""
+    out = []
+    for match in _PATH_PATTERN.findall(line):
+        normalized = _normalize_path(match)
+        if normalized:
+            out.append(normalized)
+    return out
+
+
+def _is_section_or_description(line: str) -> bool:
+    """Return True if line looks like a section header or description (not a path)."""
+    if re.match(r"^\d+\.", line) or line.startswith("="):
+        return True
+    if line.startswith(("This", "The", "Field", "The following")):
+        return True
+    if any(kw in line.lower() for kw in ("contains", "handles", "used")):
+        return True
+    if len(line.split()) >= 15 and not line.endswith(_EXTENSIONS_CODE):
+        return True
+    return False
+
+
+def _looks_like_file_path(cleaned: str) -> bool:
+    """Return True if string looks like a file path (extension or dir/file structure)."""
+    if not cleaned:
+        return False
+    if cleaned.endswith(_PATH_EXTENSIONS):
+        return True
+    return "/" in cleaned and "." in cleaned and ":" not in cleaned
+
+
+def _add_line_as_path_if_valid(line: str, paths: set[str]) -> None:
+    """If line looks like a path and passes filters, normalize and add to paths."""
+    if "/" not in line and not line.endswith(_PATH_EXTENSIONS):
+        return
+    if _is_section_or_description(line):
+        return
+    cleaned = _normalize_path(line)
+    if _looks_like_file_path(cleaned):
+        paths.add(cleaned)
+
+
 def parse_dependency_file(form_name: str, bucket: str | None = None) -> list[str]:
     """
     Parse a dependency file from MinIO and extract all file paths.
@@ -31,128 +137,37 @@ def parse_dependency_file(form_name: str, bucket: str | None = None) -> list[str
     """
     form_name_lower = form_name.lower()
     form_name_upper = form_name.upper()
-    
-    # Use default bucket (metadatas) if not specified
-    minio_sync = MinioSync(bucket=bucket)  # bucket=None uses default "metadatas" from settings
-    dependency_object_name = f"FORMS/{form_name_upper}/FORM_FILE_DEPENDENCIES/{form_name_lower}_dependencies.txt"
-    
-    logger.info("Loading dependencies from MinIO", form_name=form_name, bucket=minio_sync.bucket, object_name=dependency_object_name)
-    
-    try:
-        # bucket=None means use the MinioSync instance's bucket (defaults to "metadatas")
-        if not minio_sync.file_exists(dependency_object_name, bucket=None):
-            logger.warning("Dependency file not found in MinIO", form_name=form_name, object_name=dependency_object_name, bucket=minio_sync.bucket)
-            return []
-        
-        content = minio_sync.get_file_text(dependency_object_name, bucket=None)
-        logger.info("Loaded dependency file from MinIO", form_name=form_name, object_name=dependency_object_name)
-    except Exception as e:
-        logger.error("Failed to load dependency file from MinIO", form_name=form_name, error=str(e))
-        return []
-    
-    if not content:
-        return []
-    
-    paths: set[str] = set()
-
-    # Pattern to match file paths (handles various formats)
-    # Matches paths like:
-    # - src/main/java/options/le07.java
-    # - src/main/database/baseline/release0/TABLES/chapter_alert_rates.sql
-    # - /absolute/path/to/file.java
-    # - file.java (simple filename)
-    path_pattern = re.compile(
-        r"(?:^|\s)([a-zA-Z0-9_\-./\\]+\.(?:java|sql|form|xml|properties|py|js|ts|cs|tsx|jsx|tsx))(?:\s|$)",
-        re.MULTILINE,
+    minio_sync = MinioSync(bucket=bucket)
+    object_name = (
+        f"FORMS/{form_name_upper}/FORM_FILE_DEPENDENCIES/{form_name_lower}_dependencies.txt"
     )
 
-    # Also match paths in lines that look like file paths
+    logger.info(
+        "Loading dependencies from MinIO",
+        form_name=form_name,
+        bucket=minio_sync.bucket,
+        object_name=object_name,
+    )
+
+    content = _load_dependency_content(minio_sync, object_name, form_name)
+    if not content:
+        return []
+
+    paths: set[str] = set()
     for line in content.splitlines():
         line = line.strip()
-
-        # Skip empty lines, comments, and section headers
-        if (
-            not line
-            or line.startswith("#")
-            or line.startswith("=")
-            or (
-                line.startswith("-")
-                and not line.endswith((".java", ".sql", ".form", ".xml", ".properties"))
-            )
-            or line.upper().startswith("SECTION")
-            or line.upper().startswith("END")
-            or (line.upper().startswith("EXTERNAL") and "DEPENDENCIES" in line.upper())
-            or (
-                ":" in line and "/" not in line and not line.endswith((".java", ".sql", ".form"))
-            )  # Section header
-        ):
+        if _should_skip_line(line):
             continue
+        for path in _extract_paths_from_pattern(line):
+            paths.add(path)
+        _add_line_as_path_if_valid(line, paths)
 
-        # Check if line contains a file path
-        matches = path_pattern.findall(line)
-        for match in matches:
-            # Clean up the path
-            path = match.strip()
-            # Remove leading/trailing quotes if present
-            path = path.strip("\"'")
-            # Normalize path separators
-            path = path.replace("\\", "/")
-            # Remove leading slash if present (to make it relative)
-            if path.startswith("/"):
-                path = path[1:]
-            if path:
-                paths.add(path)
-
-        # If the line itself looks like a path, add it
-        # This handles lines that are just file paths without other text
-        if "/" in line or line.endswith(
-            (".java", ".sql", ".form", ".xml", ".properties", ".py", ".js", ".ts", ".jsx", ".tsx")
-        ):
-            # Check if it's not a section header or description text
-            if (
-                not re.match(r"^\d+\.", line)
-                and not line.startswith("=")
-                and not line.startswith("This")
-                and not line.startswith("The")
-                and not line.startswith("Field")
-                and not line.startswith("The following")
-                and "contains" not in line.lower()
-                and "handles" not in line.lower()
-                and "used" not in line.lower()
-                or line.endswith((".java", ".sql", ".form"))  # Allow if it's a file path
-                and len(line.split()) < 15  # Allow slightly longer lines for SQL paths
-            ):
-                cleaned = line.strip("\"'")
-                cleaned = cleaned.replace("\\", "/")
-                if cleaned.startswith("/"):
-                    cleaned = cleaned[1:]
-                # Only add if it looks like a file path (has extension or directory structure)
-                if cleaned and (
-                    cleaned.endswith(
-                        (
-                            ".java",
-                            ".sql",
-                            ".form",
-                            ".xml",
-                            ".properties",
-                            ".py",
-                            ".js",
-                            ".ts",
-                            ".jsx",
-                            ".tsx",
-                        )
-                    )
-                    or ("/" in cleaned and "." in cleaned and ":" not in cleaned)
-                ):
-                    paths.add(cleaned)
-
-    paths_list = sorted(list(paths))
+    paths_list = sorted(paths)
     logger.info(
         "Parsed dependency file",
         form_name=form_name,
         total_paths=len(paths_list),
     )
-
     return paths_list
 
 
@@ -182,6 +197,48 @@ def normalize_path_for_matching(path: str, zip_root: Path | None = None) -> str:
     return normalized
 
 
+_EXTRACT_PREFIXES = ("oases-master/", "java/", "src/")
+
+
+def _normalize_relative_paths(file_path: Path, extract_root: Path) -> tuple[str, str]:
+    """Get normalized relative path and a version with common ZIP prefixes stripped."""
+    try:
+        relative_path = file_path.relative_to(extract_root)
+    except ValueError:
+        relative_path = Path(file_path.name)
+    normalized = str(relative_path).replace("\\", "/")
+    clean = normalized
+    for prefix in _EXTRACT_PREFIXES:
+        if clean.startswith(prefix):
+            clean = clean[len(prefix) :]
+            break
+    return normalized, clean
+
+
+def _matches_one_dependency(
+    normalized_relative: str,
+    normalized_relative_clean: str,
+    file_name: str,
+    dep_path: str,
+) -> bool:
+    """Return True if file paths match this dependency path."""
+    normalized_dep = normalize_path_for_matching(dep_path)
+    if normalized_relative == normalized_dep or normalized_relative_clean == normalized_dep:
+        return True
+    if normalized_relative.endswith(normalized_dep) or normalized_relative_clean.endswith(
+        normalized_dep
+    ):
+        return True
+    if normalized_dep.endswith(normalized_relative) or normalized_dep.endswith(
+        normalized_relative_clean
+    ):
+        return True
+    if "/" not in normalized_dep and file_name == normalized_dep:
+        return True
+    dep_filename = Path(normalized_dep).name
+    return bool(dep_filename and dep_filename == file_name)
+
+
 def match_file_path(file_path: Path, dependency_paths: list[str], extract_root: Path) -> bool:
     """
     Check if a file path matches any of the dependency paths.
@@ -194,50 +251,13 @@ def match_file_path(file_path: Path, dependency_paths: list[str], extract_root: 
     Returns:
         True if the file matches any dependency path
     """
-    # Get relative path from extract root
-    try:
-        relative_path = file_path.relative_to(extract_root)
-    except ValueError:
-        # File is not under extract_root, use filename only
-        relative_path = Path(file_path.name)
-
-    # Normalize the relative path
-    normalized_relative = str(relative_path).replace("\\", "/")
-
-    # Remove common ZIP extraction prefixes (e.g., "oases-master/", "java/")
-    # This handles cases where ZIP contains a root folder
-    normalized_relative_clean = normalized_relative
-    for prefix in ["oases-master/", "java/", "src/"]:
-        if normalized_relative_clean.startswith(prefix):
-            normalized_relative_clean = normalized_relative_clean[len(prefix) :]
-            break
-
-    # Check against each dependency path
+    normalized_relative, normalized_relative_clean = _normalize_relative_paths(
+        file_path, extract_root
+    )
+    file_name = file_path.name
     for dep_path in dependency_paths:
-        normalized_dep = normalize_path_for_matching(dep_path)
-
-        # Match by full path (try both with and without prefix)
-        if normalized_relative == normalized_dep or normalized_relative_clean == normalized_dep:
-            return True
-
-        # Match by path ending (handles cases where zip structure differs)
-        # e.g., "oases-master/src/main/java/options/le11.java" matches "src/main/java/options/le11.java"
-        if normalized_relative.endswith(normalized_dep) or normalized_relative_clean.endswith(
-            normalized_dep
+        if _matches_one_dependency(
+            normalized_relative, normalized_relative_clean, file_name, dep_path
         ):
             return True
-        if normalized_dep.endswith(normalized_relative) or normalized_dep.endswith(
-            normalized_relative_clean
-        ):
-            return True
-
-        # Match by filename if dependency path is just a filename
-        if "/" not in normalized_dep and file_path.name == normalized_dep:
-            return True
-
-        # Match by filename component (last part of path)
-        dep_filename = Path(normalized_dep).name
-        if dep_filename and dep_filename == file_path.name:
-            return True
-
     return False

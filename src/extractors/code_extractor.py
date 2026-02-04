@@ -19,7 +19,6 @@ from src.utils.dependency_parser import (
 from src.utils.file_utils import (
     extract_zip,
     get_file_extension,
-    is_code_file,
     read_file_content,
 )
 from src.utils.logging_config import get_logger
@@ -56,23 +55,40 @@ class FormMapping:
     form_files: list[str]
 
 
+# Extensions supported by the code extractor (Java, COBOL, SQL, form, properties, XML only)
+EXT_JAVA = ".java"
+EXT_COB = ".cob"
+EXT_CBL = ".cbl"
+EXT_SQL = ".sql"
+EXT_FORM = ".form"
+EXT_PROPERTIES = ".properties"
+EXT_XML = ".xml"
+
+CODE_EXTRACTOR_EXTENSIONS = {
+    EXT_JAVA,
+    EXT_COB,
+    EXT_CBL,
+    EXT_SQL,
+    EXT_FORM,
+    EXT_PROPERTIES,
+    EXT_XML,
+}
+
+
 class CodeExtractor:
     """
     Extracts and analyzes code from legacy codebase archives.
-    Supports Java, SQL, and form files commonly found in legacy systems.
+    Supports Java, COBOL, SQL, .form, .properties, and .xml only.
     """
 
     LANGUAGE_MAP = {
-        ".java": "java",
-        ".py": "python",
-        ".js": "javascript",
-        ".ts": "typescript",
-        ".tsx": "typescript",
-        ".cs": "csharp",
-        ".sql": "sql",
-        ".xml": "xml",
-        ".form": "java_form",
-        ".properties": "properties",
+        EXT_JAVA: "java",
+        EXT_COB: "cobol",
+        EXT_CBL: "cobol",
+        EXT_SQL: "sql",
+        EXT_FORM: "java_form",
+        EXT_PROPERTIES: "properties",
+        EXT_XML: "xml",
     }
 
     def __init__(self) -> None:
@@ -155,7 +171,7 @@ class CodeExtractor:
         code_files: list[CodeFile] = []
         skipped_files = 0
         for file_path in extracted_files:
-            if is_code_file(file_path):
+            if get_file_extension(file_path) in CODE_EXTRACTOR_EXTENSIONS:
                 code_file = self._parse_code_file(file_path, extract_dir)
                 if code_file:
                     code_files.append(code_file)
@@ -261,8 +277,10 @@ class CodeExtractor:
             Parsed CodeFile or None if parsing fails
         """
         try:
-            content = read_file_content(file_path)
             extension = get_file_extension(file_path)
+            if extension not in CODE_EXTRACTOR_EXTENSIONS:
+                return None
+            content = read_file_content(file_path)
             language = self.LANGUAGE_MAP.get(extension, "unknown")
 
             relative_path = str(file_path.relative_to(base_path))
@@ -301,9 +319,9 @@ class CodeExtractor:
         """Determine the type of code file based on content and path."""
         name = file_path.name.lower()
 
-        if file_path.suffix == ".form":
+        if file_path.suffix.lower() == EXT_FORM:
             return "form_definition"
-        if file_path.suffix == ".sql":
+        if file_path.suffix.lower() == EXT_SQL:
             return self._determine_sql_type(content)
         if "adapter" in name:
             return "adapter"
@@ -379,6 +397,26 @@ class CodeExtractor:
         for path, node in tree.filter(javalang.tree.Import):
             imports.append(node.path)
 
+    @staticmethod
+    def _get_java_field_type(field_node) -> str:
+        """Get type string for a Java field node."""
+        if not field_node.type:
+            return ""
+        t = field_node.type
+        if isinstance(t, javalang.tree.ReferenceType):
+            return ".".join(t.name) if hasattr(t.name, "__iter__") else str(t.name)
+        if hasattr(t, "name"):
+            return str(t.name)
+        return str(t)
+
+    def _append_java_class_fields(self, node, fields: list[str]) -> None:
+        """Extract and append all fields from a Java class declaration node."""
+        for field_node in node.fields:
+            for declarator in field_node.declarators:
+                field_name = declarator.name
+                field_type = self._get_java_field_type(field_node)
+                fields.append(f"{field_name}:{field_type}" if field_type else field_name)
+
     def _extract_java_classes(
         self, tree, classes: list[str], methods: list[str], fields: list[str], implements: list[str]
     ) -> str | None:
@@ -390,29 +428,7 @@ class CodeExtractor:
                 extends = node.extends.name
             if node.implements:
                 implements.extend([i.name for i in node.implements])
-
-            # Extract ALL fields including private ones
-            for field in node.fields:
-                for declarator in field.declarators:
-                    field_name = declarator.name
-                    # Include field type information
-                    field_type = ""
-                    if field.type:
-                        if isinstance(field.type, javalang.tree.ReferenceType):
-                            if hasattr(field.type.name, "__iter__"):
-                                field_type = ".".join(field.type.name)
-                            else:
-                                field_type = str(field.type.name)
-                        elif hasattr(field.type, "name"):
-                            field_type = str(field.type.name)
-                        else:
-                            field_type = str(field.type)
-                    # Store as "name:type" for better context
-                    if field_type:
-                        fields.append(f"{field_name}:{field_type}")
-                    else:
-                        fields.append(field_name)
-
+            self._append_java_class_fields(node, fields)
             for method in node.methods:
                 methods.append(method.name)
         return extends
@@ -880,39 +896,50 @@ class CodeExtractor:
 
         return documents
 
+    @staticmethod
+    def _update_string_state(
+        char: str, i: int, content: str, in_string: bool, string_char: str | None
+    ) -> tuple[bool, str | None]:
+        """Update in-string state when scanning for braces; skip string literals."""
+        if char not in "\"'":
+            return in_string, string_char
+        if not in_string:
+            return True, char
+        if char == string_char and (i == 0 or content[i - 1] != "\\"):
+            return False, None
+        return in_string, string_char
+
+    @staticmethod
+    def _process_brace(char: str, brace_count: int, method_started: bool) -> tuple[int, bool, bool]:
+        """Update brace count; return (new_count, new_method_started, done)."""
+        if char == "{":
+            return brace_count + 1, True, False
+        if char == "}":
+            new_count = brace_count - 1
+            return new_count, method_started, method_started and new_count == 0
+        return brace_count, method_started, False
+
     def _extract_full_method_body(self, content: str, start_pos: int) -> str:
         """Extract complete method body by counting braces for proper nesting."""
         brace_count = 0
         in_string = False
         string_char = None
-        i = start_pos
         method_started = False
 
+        i = start_pos
         while i < len(content):
             char = content[i]
-
-            # Handle string literals
-            if char in "\"'":
-                if not in_string:
-                    in_string = True
-                    string_char = char
-                elif char == string_char and (i == 0 or content[i - 1] != "\\"):
-                    in_string = False
-                    string_char = None
-
-            # Count braces only outside strings
+            in_string, string_char = self._update_string_state(
+                char, i, content, in_string, string_char
+            )
             if not in_string:
-                if char == "{":
-                    brace_count += 1
-                    method_started = True
-                elif char == "}":
-                    brace_count -= 1
-                    if method_started and brace_count == 0:
-                        return content[start_pos : i + 1]
-
+                brace_count, method_started, done = self._process_brace(
+                    char, brace_count, method_started
+                )
+                if done:
+                    return content[start_pos : i + 1]
             i += 1
 
-        # Fallback: return up to 15000 chars if brace matching fails
         return content[start_pos : start_pos + 15000]
 
     def _create_comprehensive_document(self, code_file: CodeFile, form_name: str) -> Document:

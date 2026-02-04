@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+TOOL_RESULT_MAX_CHARS = 20000  # Limit each tool result to ~5K tokens
+
 
 class AgentRunner:
     """
@@ -66,7 +68,7 @@ class AgentRunner:
 
                 # Handle tool use
                 if response.stop_reason == "tool_use":
-                    await self._handle_tool_use(response)
+                    self._handle_tool_use(response)
                     continue
 
                 # Unexpected stop reason
@@ -140,7 +142,40 @@ class AgentRunner:
 
         return response
 
-    async def _handle_tool_use(self, response: Any) -> None:
+    def _parse_tool_uses_from_response(self, response: Any) -> tuple[list[ToolUse], str | None]:
+        """Extract tool_use blocks and optional text from Claude response."""
+        tool_uses: list[ToolUse] = []
+        text_content = None
+        for block in response.content:
+            if block.type == "tool_use":
+                tool_uses.append(ToolUse(id=block.id, name=block.name, input=block.input))
+            elif block.type == "text":
+                text_content = block.text
+        return tool_uses, text_content
+
+    def _execute_one_tool(self, tool_use: ToolUse) -> tuple[str, str, bool]:
+        """Run a single tool and return (tool_use_id, result, is_error)."""
+        if self.agent.config.verbose:
+            self.logger.info(f"Calling tool: {tool_use.name}", input=tool_use.input)
+        else:
+            print(f"  → Calling: {tool_use.name}")
+        try:
+            result = self.agent.execute_tool(tool_use.name, tool_use.input)
+            is_error = result.startswith("Error:")
+            if len(result) > TOOL_RESULT_MAX_CHARS:
+                result = (
+                    result[:TOOL_RESULT_MAX_CHARS]
+                    + f"\n\n[... truncated {len(result) - TOOL_RESULT_MAX_CHARS} chars ...]"
+                )
+        except Exception as e:
+            result = f"Error: {str(e)}"
+            is_error = True
+        if self.agent.config.verbose:
+            preview = result[:500] + "..." if len(result) > 500 else result
+            self.logger.debug(f"Tool result: {preview}")
+        return tool_use.id, result, is_error
+
+    def _handle_tool_use(self, response: Any) -> None:
         """
         Handle tool use requests from Claude.
 
@@ -152,67 +187,17 @@ class AgentRunner:
         Args:
             response: The API response containing tool use
         """
-        # Collect all tool_use blocks and text content
-        tool_uses: list[ToolUse] = []
-        text_content = None
-
-        for block in response.content:
-            if block.type == "tool_use":
-                tool_uses.append(
-                    ToolUse(
-                        id=block.id,
-                        name=block.name,
-                        input=block.input,
-                    )
-                )
-            elif block.type == "text":
-                text_content = block.text
-
+        tool_uses, text_content = self._parse_tool_uses_from_response(response)
         if not tool_uses:
-            # No tools to execute, just add text if present
             if text_content:
                 self.agent.message_history.add_assistant_message(content=text_content)
             return
 
-        # Add assistant message with ALL tool_use blocks
         self.agent.message_history.add_assistant_message_with_tools(
             content=text_content,
             tool_uses=tool_uses,
         )
-
-        # Execute all tools and collect results
-        tool_results: list[tuple[str, str, bool]] = []
-        MAX_RESULT_SIZE = 20000  # Limit each tool result to ~5K tokens
-
-        for tool_use in tool_uses:
-            if self.agent.config.verbose:
-                self.logger.info(f"Calling tool: {tool_use.name}", input=tool_use.input)
-            else:
-                print(f"  → Calling: {tool_use.name}")
-
-            # Execute the tool
-            try:
-                result = self.agent.execute_tool(tool_use.name, tool_use.input)
-                is_error = result.startswith("Error:")
-
-                # Truncate large results to prevent context overflow
-                if len(result) > MAX_RESULT_SIZE:
-                    result = (
-                        result[:MAX_RESULT_SIZE]
-                        + f"\n\n[... truncated {len(result) - MAX_RESULT_SIZE} chars ...]"
-                    )
-
-            except Exception as e:
-                result = f"Error: {str(e)}"
-                is_error = True
-
-            tool_results.append((tool_use.id, result, is_error))
-
-            if self.agent.config.verbose:
-                preview = result[:500] + "..." if len(result) > 500 else result
-                self.logger.debug(f"Tool result: {preview}")
-
-        # Add ALL tool results in ONE user message
+        tool_results = [self._execute_one_tool(tool_use) for tool_use in tool_uses]
         self.agent.message_history.add_tool_results(tool_results)
 
     def _extract_text_content(self, response: Any) -> str:

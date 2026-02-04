@@ -65,7 +65,7 @@ For EACH business logic rule, document in this format:
 
 ### BL-XXX: [Rule Name]
 - **Trigger**: User clicks Save / Field loses focus / etc.
-- **Condition**: `if (alertLimitDays == 0 && alertLimitLandings == 0)`  
+- **Condition**: `if (alertLimitDays == 0 && alertLimitLandings == 0)`
 - **Action**: Show error "Both alert limits cannot be zero"
 - **Inputs**: List fields involved with data types
 - **Outputs**: What gets saved/updated/returned
@@ -267,9 +267,7 @@ The summary should include (4-5 paragraphs):
 Write for technical leads and project managers who need to plan the migration."""
 
     @staticmethod
-    def migration_strategy_section(
-        form_name: str, complexity: str, tech_details: str
-    ) -> str:
+    def migration_strategy_section(form_name: str, complexity: str, tech_details: str) -> str:
         """Prompt for generating migration strategy."""
         return f"""Create a detailed migration strategy for "{form_name}".
 

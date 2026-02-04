@@ -913,7 +913,7 @@ async def verify_minio_bucket_activity(bucket: str | None = None) -> dict[str, A
     logger.info("Verifying MinIO bucket exists", bucket=sync.bucket)
 
     try:
-        sync.ensure_bucket(bucket=None, must_exist=True)
+        sync.ensure_bucket(bucket=None)
         logger.info("MinIO bucket verified", bucket=sync.bucket)
         return {"success": True, "bucket": sync.bucket}
     except ValueError:

@@ -22,6 +22,8 @@ from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+DEFAULT_CONTENT_TYPE = "application/octet-stream"
+
 
 class MinioSync:
     """Utility class for syncing PRD files to MinIO bucket."""
@@ -45,16 +47,15 @@ class MinioSync:
             logger.info("Connected to MinIO", endpoint=self.settings.minio.endpoint)
         return self._client
 
-    def ensure_bucket(self, bucket: str | None = None, must_exist: bool = True) -> None:
+    def ensure_bucket(self, bucket: str | None = None) -> None:
         """
         Verify bucket exists (never creates buckets).
-        
+
         Args:
             bucket: Bucket name (defaults to configured bucket: "metadatas")
-            must_exist: If True, throw error if bucket doesn't exist (default: True)
-        
+
         Raises:
-            ValueError: If bucket doesn't exist and must_exist=True
+            ValueError: If bucket does not exist or verification fails
         """
         bucket = bucket or self.bucket
         try:
@@ -93,12 +94,12 @@ class MinioSync:
             raise FileNotFoundError(f"File not found: {local_path}")
 
         # Verify bucket exists (don't create)
-        self.ensure_bucket(bucket, must_exist=True)
+        self.ensure_bucket(bucket)
 
         # Determine content type
         content_type, _ = mimetypes.guess_type(str(local_path))
         if not content_type:
-            content_type = "application/octet-stream"
+            content_type = DEFAULT_CONTENT_TYPE
 
         # Upload file
         self.client.fput_object(
@@ -146,7 +147,7 @@ class MinioSync:
             raise ValueError(f"Directory not found: {local_dir}")
 
         # Verify bucket exists (don't create)
-        self.ensure_bucket(bucket, must_exist=True)
+        self.ensure_bucket(bucket)
 
         uploaded_count = 0
 
@@ -161,7 +162,9 @@ class MinioSync:
 
             # Calculate relative path and object name
             relative_path = file_path.relative_to(local_dir)
-            object_name = f"{prefix}{relative_path.as_posix()}" if prefix else relative_path.as_posix()
+            object_name = (
+                f"{prefix}{relative_path.as_posix()}" if prefix else relative_path.as_posix()
+            )
 
             try:
                 self.upload_file(file_path, object_name, bucket)
@@ -202,7 +205,7 @@ class MinioSync:
         """
         bucket = bucket or self.bucket
         # Check bucket exists, don't create it
-        self.ensure_bucket(bucket, must_exist=True)
+        self.ensure_bucket(bucket)
 
         results = {
             "FORMS": False,
@@ -220,22 +223,25 @@ class MinioSync:
                 # Check if folder already exists (check for .keep file or any object with prefix)
                 marker_name = f"{folder}.keep"
                 # List objects with this prefix to see if folder exists
-                existing_objects = list(self.client.list_objects(bucket, prefix=folder, recursive=False))
+                existing_objects = list(
+                    self.client.list_objects(bucket, prefix=folder, recursive=False)
+                )
                 if any(existing_objects):
                     # Folder already exists
                     results[folder.rstrip("/")] = True
                     logger.debug(f"Folder already exists: {folder}", bucket=bucket)
                     continue
-                
+
                 # Create a .keep file to establish the folder structure
                 from io import BytesIO
+
                 empty_content = BytesIO(b"")
                 self.client.put_object(
                     bucket,
                     marker_name,
                     empty_content,
                     length=0,
-                    content_type="application/octet-stream",
+                    content_type=DEFAULT_CONTENT_TYPE,
                 )
                 results[folder.rstrip("/")] = True
                 logger.info(f"Created folder structure: {folder}", bucket=bucket)
@@ -268,7 +274,7 @@ class MinioSync:
         self.create_folder_structure(bucket)
 
         # Check bucket exists, don't create it
-        self.ensure_bucket(bucket, must_exist=True)
+        self.ensure_bucket(bucket)
 
         results = {
             "FORM_DOCS": False,
@@ -286,28 +292,37 @@ class MinioSync:
         for folder in folders:
             try:
                 # Check if folder already exists
-                existing_objects = list(self.client.list_objects(bucket, prefix=folder, recursive=False))
+                existing_objects = list(
+                    self.client.list_objects(bucket, prefix=folder, recursive=False)
+                )
                 if any(existing_objects):
                     # Folder already exists
                     folder_key = folder.split("/")[-2]
                     results[folder_key] = True
-                    logger.debug(f"Form folder already exists: {folder}", form_name=form_name_upper, bucket=bucket)
+                    logger.debug(
+                        f"Form folder already exists: {folder}",
+                        form_name=form_name_upper,
+                        bucket=bucket,
+                    )
                     continue
-                
+
                 # Create a .keep file to establish the folder structure
                 marker_name = f"{folder}.keep"
                 from io import BytesIO
+
                 empty_content = BytesIO(b"")
                 self.client.put_object(
                     bucket,
                     marker_name,
                     empty_content,
                     length=0,
-                    content_type="application/octet-stream",
+                    content_type=DEFAULT_CONTENT_TYPE,
                 )
                 folder_key = folder.split("/")[-2]  # Get folder name like "FORM_DOCS"
                 results[folder_key] = True
-                logger.info(f"Created form folder: {folder}", form_name=form_name_upper, bucket=bucket)
+                logger.info(
+                    f"Created form folder: {folder}", form_name=form_name_upper, bucket=bucket
+                )
             except Exception as e:
                 logger.warning(f"Failed to create folder {folder}: {e}")
                 folder_key = folder.split("/")[-2]
@@ -315,7 +330,35 @@ class MinioSync:
 
         return results
 
-    def sync_prd_structure(self, prd_base_dir: str | Path, bucket: str | None = None) -> dict[str, int]:
+    def _is_form_directory(self, path: Path) -> bool:
+        """Return True if path is a form dir (has FORM_DOCS, FORM_FILE_DEPENDENCIES, or UI_SCREENSHOTS)."""
+        form_subdirs = {"FORM_DOCS", "FORM_FILE_DEPENDENCIES", "UI_SCREENSHOTS"}
+        for subdir in path.iterdir():
+            if subdir.is_dir() and subdir.name in form_subdirs:
+                return True
+        return False
+
+    def _sync_fixed_dir(
+        self,
+        base: Path,
+        dir_name: str,
+        prefix: str,
+        count_key: str,
+        counts: dict[str, int],
+        bucket: str,
+    ) -> None:
+        """Sync a single fixed directory (e.g. DB_PRD) to MinIO if it exists; update counts."""
+        dir_path = base / dir_name
+        if not dir_path.exists():
+            return
+        count = self.upload_directory(dir_path, prefix=prefix, bucket=bucket)
+        counts[count_key] = count
+        counts["total"] += count
+        logger.info(f"Synced {dir_name}", files=count)
+
+    def sync_prd_structure(
+        self, prd_base_dir: str | Path, bucket: str | None = None
+    ) -> dict[str, int]:
         """
         Sync the entire PRD directory structure to MinIO.
 
@@ -348,10 +391,9 @@ class MinioSync:
         if not prd_base_dir.exists():
             raise ValueError(f"PRD base directory not found: {prd_base_dir}")
 
-        # Verify bucket exists (don't create)
-        self.ensure_bucket(bucket, must_exist=True)
+        self.ensure_bucket(bucket)
 
-        counts = {
+        counts: dict[str, int] = {
             "forms": 0,
             "db_prd": 0,
             "export_codebase_prd": 0,
@@ -359,53 +401,31 @@ class MinioSync:
             "total": 0,
         }
 
-        # Sync form directories - wrap them in FORMS/ prefix
-        # Look for directories that look like form names (LE07, LE11, etc.)
         for item in prd_base_dir.iterdir():
             if not item.is_dir():
                 continue
-
-            # Check if it's a form directory (has FORM_DOCS, FORM_FILE_DEPENDENCIES, or UI_SCREENSHOTS subdirectories)
-            is_form_dir = False
-            for subdir in item.iterdir():
-                if subdir.is_dir() and subdir.name in ("FORM_DOCS", "FORM_FILE_DEPENDENCIES", "UI_SCREENSHOTS"):
-                    is_form_dir = True
-                    break
-
-            if is_form_dir:
-                # This is a form directory - wrap in FORMS/ prefix
-                prefix = f"FORMS/{item.name}/"
-                count = self.upload_directory(item, prefix=prefix, bucket=bucket)
-                counts["forms"] += count
-                counts["total"] += count
-                logger.info(f"Synced form: {item.name}", files=count, prefix=prefix)
-
-        # Sync DB_PRD directory
-        db_prd_dir = prd_base_dir / "DB_PRD"
-        if db_prd_dir.exists():
-            count = self.upload_directory(db_prd_dir, prefix="DB_PRD/", bucket=bucket)
-            counts["db_prd"] = count
+            if not self._is_form_directory(item):
+                continue
+            prefix = f"FORMS/{item.name}/"
+            count = self.upload_directory(item, prefix=prefix, bucket=bucket)
+            counts["forms"] += count
             counts["total"] += count
-            logger.info("Synced DB_PRD", files=count)
+            logger.info(f"Synced form: {item.name}", files=count, prefix=prefix)
 
-        # Sync EXPORT_CODEBASE_PRD directory
-        export_dir = prd_base_dir / "EXPORT_CODEBASE_PRD"
-        if export_dir.exists():
-            count = self.upload_directory(export_dir, prefix="EXPORT_CODEBASE_PRD/", bucket=bucket)
-            counts["export_codebase_prd"] = count
-            counts["total"] += count
-            logger.info("Synced EXPORT_CODEBASE_PRD", files=count)
-
-        # Sync LEGACY_CODEBASE directory
-        legacy_dir = prd_base_dir / "LEGACY_CODEBASE"
-        if legacy_dir.exists():
-            count = self.upload_directory(legacy_dir, prefix="LEGACY_CODEBASE/", bucket=bucket)
-            counts["legacy_codebase"] = count
-            counts["total"] += count
-            logger.info("Synced LEGACY_CODEBASE", files=count)
+        self._sync_fixed_dir(prd_base_dir, "DB_PRD", "DB_PRD/", "db_prd", counts, bucket)
+        self._sync_fixed_dir(
+            prd_base_dir,
+            "EXPORT_CODEBASE_PRD",
+            "EXPORT_CODEBASE_PRD/",
+            "export_codebase_prd",
+            counts,
+            bucket,
+        )
+        self._sync_fixed_dir(
+            prd_base_dir, "LEGACY_CODEBASE", "LEGACY_CODEBASE/", "legacy_codebase", counts, bucket
+        )
 
         logger.info("PRD structure sync complete", bucket=bucket, **counts)
-
         return counts
 
     def download_file(
@@ -480,11 +500,15 @@ class MinioSync:
         response.close()
         response.release_conn()
 
-        logger.debug("Retrieved file content from MinIO", object_name=object_name, size=len(content))
+        logger.debug(
+            "Retrieved file content from MinIO", object_name=object_name, size=len(content)
+        )
 
         return content
 
-    def get_file_text(self, object_name: str, bucket: str | None = None, encoding: str = "utf-8") -> str:
+    def get_file_text(
+        self, object_name: str, bucket: str | None = None, encoding: str = "utf-8"
+    ) -> str:
         """
         Get file content from MinIO as text.
 
@@ -582,7 +606,9 @@ class MinioSync:
             }
 
         except S3Error as e:
-            logger.error("Failed to delete form data from MinIO", form_name=form_name_upper, error=str(e))
+            logger.error(
+                "Failed to delete form data from MinIO", form_name=form_name_upper, error=str(e)
+            )
             return {
                 "success": False,
                 "error": str(e),

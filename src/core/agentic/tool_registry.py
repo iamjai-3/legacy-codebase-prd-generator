@@ -122,6 +122,21 @@ class Tool:
             return f"Error executing {self.name}: {str(e)}"
 
 
+def _annotation_to_param_type(annotation: Any) -> str:
+    """Map a parameter annotation to Anthropic param type string."""
+    if annotation is inspect.Parameter.empty:
+        return "string"
+    if annotation is int:
+        return "integer"
+    if annotation is bool:
+        return "boolean"
+    if annotation is list:
+        return "array"
+    if annotation is dict:
+        return "object"
+    return "string"
+
+
 class ToolRegistry:
     """
     Registry for managing available tools.
@@ -205,23 +220,9 @@ class ToolRegistry:
         for param_name, param in sig.parameters.items():
             if param_name in ("self", "cls", "working_directory"):
                 continue
-
-            # Determine type from annotation
-            param_type = "string"
-            if param.annotation != inspect.Parameter.empty:
-                if param.annotation == int:
-                    param_type = "integer"
-                elif param.annotation == bool:
-                    param_type = "boolean"
-                elif param.annotation == list:
-                    param_type = "array"
-                elif param.annotation == dict:
-                    param_type = "object"
-
-            # Check if required
+            param_type = _annotation_to_param_type(param.annotation)
             required = param.default == inspect.Parameter.empty
             default = None if required else param.default
-
             parameters.append(
                 ToolParameter(
                     name=param_name,

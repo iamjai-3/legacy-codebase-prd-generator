@@ -14,7 +14,7 @@ from enum import Enum
 from functools import wraps
 from typing import Any
 
-import asyncpg
+import asyncpg  # pyright: ignore[reportMissingImports]
 
 from src.config.settings import get_settings
 from src.utils.logging_config import get_logger
@@ -71,8 +71,8 @@ class CacheManager:
             # Create cache table
             await self._create_tables()
 
-            # Start cleanup task
-            asyncio.create_task(self._cleanup_loop())
+            # Start cleanup task (keep reference to prevent garbage collection)
+            self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
             self._initialized = True
             logger.info("Cache manager initialized successfully")
@@ -95,7 +95,7 @@ class CacheManager:
                     hit_count INTEGER DEFAULT 0,
                     metadata JSONB
                 );
-                
+
                 CREATE INDEX IF NOT EXISTS idx_cache_type ON prd_agent_cache(cache_type);
                 CREATE INDEX IF NOT EXISTS idx_expires_at ON prd_agent_cache(expires_at);
             """
@@ -126,7 +126,7 @@ class CacheManager:
                     """
                     UPDATE prd_agent_cache
                     SET hit_count = hit_count + 1
-                    WHERE cache_key = $1 
+                    WHERE cache_key = $1
                         AND cache_type = $2
                         AND expires_at > NOW()
                     RETURNING value
@@ -181,11 +181,11 @@ class CacheManager:
             async with self._pool.acquire() as conn:
                 await conn.execute(
                     """
-                    INSERT INTO prd_agent_cache 
+                    INSERT INTO prd_agent_cache
                         (cache_key, cache_type, value, expires_at, metadata)
                     VALUES ($1, $2, $3, $4, $5)
-                    ON CONFLICT (cache_key) 
-                    DO UPDATE SET 
+                    ON CONFLICT (cache_key)
+                    DO UPDATE SET
                         value = EXCLUDED.value,
                         expires_at = EXCLUDED.expires_at,
                         metadata = EXCLUDED.metadata
@@ -246,7 +246,7 @@ class CacheManager:
             async with self._pool.acquire() as conn:
                 stats = await conn.fetch(
                     """
-                    SELECT 
+                    SELECT
                         cache_type,
                         COUNT(*) as total_entries,
                         SUM(hit_count) as total_hits,
@@ -290,7 +290,7 @@ class CacheManager:
                 await asyncio.sleep(self.cache_settings.cleanup_interval)
                 await self._cleanup_expired()
             except asyncio.CancelledError:
-                break
+                raise  # Re-raise so the task is properly cancelled
             except Exception as e:
                 logger.error(f"Cleanup loop error: {e}")
 

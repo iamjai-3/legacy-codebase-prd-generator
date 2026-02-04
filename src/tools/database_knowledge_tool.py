@@ -218,7 +218,7 @@ def get_oracle_to_postgres_mapping() -> str:
 
 1. **SERIAL/BIGSERIAL** - Auto-incrementing primary keys
 2. **JSONB** - Flexible schema for metadata fields
-3. **TEXT[]** - Array types for tags/lists  
+3. **TEXT[]** - Array types for tags/lists
 4. **UUID** - Globally unique identifiers
 5. **TIMESTAMP WITH TIME ZONE** - Timezone-aware dates
 
@@ -235,6 +235,35 @@ def get_oracle_to_postgres_mapping() -> str:
 """
 
 
+def _parse_highly_connected_section(lines: list[str]) -> list[str]:
+    """Extract lines from the 'Highly Connected Tables' section until next ##."""
+    connected_tables = []
+    in_section = False
+    for line in lines:
+        if "Highly Connected Tables" in line:
+            in_section = True
+            continue
+        if in_section and line.startswith("##"):
+            break
+        if in_section and line.strip():
+            connected_tables.append(line)
+    return connected_tables
+
+
+def _extract_high_rel_tables_from_lines(lines: list[str]) -> list[tuple[str, int]]:
+    """Extract (table, relationship_count) from lines matching **table** (N relationship pattern."""
+    high_rel_tables = []
+    for line in lines:
+        match = re.search(r"\*\*([^*]+)\*\*\s*\((\d+)\s*relationship", line)
+        if match:
+            table = match.group(1)
+            count = int(match.group(2))
+            if count >= 20:
+                high_rel_tables.append((table, count))
+    high_rel_tables.sort(key=lambda x: x[1], reverse=True)
+    return high_rel_tables
+
+
 def get_highly_connected_tables() -> str:
     """
     Get list of highly connected tables (many relationships).
@@ -246,44 +275,20 @@ def get_highly_connected_tables() -> str:
     """
     try:
         db_prd = get_db_prd()
-
         if "Error" in db_prd:
             return f"Database PRD not available: {db_prd}"
 
-        # Find highly connected tables section
         lines = db_prd.split("\n")
-
-        in_section = False
-        connected_tables = []
-
-        for line in lines:
-            if "Highly Connected Tables" in line:
-                in_section = True
-                continue
-            if in_section and line.startswith("##"):
-                break
-            if in_section and line.strip():
-                connected_tables.append(line)
-
+        connected_tables = _parse_highly_connected_section(lines)
         if connected_tables:
             return "# Highly Connected Tables\n\n" + "\n".join(connected_tables[:30])
 
-        # Fallback: extract tables with high relationship counts
-        high_rel_tables = []
-        for line in lines:
-            match = re.search(r"\*\*([^*]+)\*\*\s*\((\d+)\s*relationship", line)
-            if match:
-                table = match.group(1)
-                count = int(match.group(2))
-                if count >= 20:
-                    high_rel_tables.append((table, count))
-
-        high_rel_tables.sort(key=lambda x: x[1], reverse=True)
-
+        high_rel_tables = _extract_high_rel_tables_from_lines(lines)
         if high_rel_tables:
             output = ["# Highly Connected Tables (20+ relationships)\n"]
-            for table, count in high_rel_tables[:20]:
-                output.append(f"- **{table}** ({count} relationships)")
+            output.extend(
+                f"- **{table}** ({count} relationships)" for table, count in high_rel_tables[:20]
+            )
             return "\n".join(output)
 
         return "No highly connected tables information found."
