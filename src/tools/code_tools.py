@@ -321,7 +321,7 @@ def search_codebase(form_name: str, query: str, limit: int = 10) -> str:
 
 
 # Per-chunk cap to keep total context within tool result limit (~5k tokens)
-# 5 chunks × 4000 chars = 20k chars, matching TOOL_RESULT_MAX_CHARS in agent_runner
+# 5 chunks × 4000 chars = 20k chars, matching default tool_result_max_chars
 CODE_CONTEXT_CHUNK_MAX_CHARS = 4000
 
 

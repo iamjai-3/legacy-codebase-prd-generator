@@ -9,9 +9,12 @@ Implements the main agent execution loop that:
 """
 
 import asyncio
+import hashlib
+import json
 from typing import TYPE_CHECKING, Any
 
 from src.core.agentic.message_history import ToolUse
+from src.utils.cache_manager import CacheType, get_cache_manager
 from src.utils.logging_config import get_logger
 
 if TYPE_CHECKING:
@@ -20,7 +23,20 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-TOOL_RESULT_MAX_CHARS = 20000  # Limit each tool result to ~5K tokens
+IDEMPOTENT_TOOLS = {
+    "get_migration_playbook",
+    "get_all_form_knowledge",
+    "get_form_docs",
+    "get_dependencies",
+    "get_ui_flow_docs",
+    "list_export_templates",
+    "get_conversion_prompt",
+    "get_oracle_to_postgres_mapping",
+    "get_database_schema",
+    "get_table_mappings",
+    "get_db_prd",
+    "list_screenshots",
+}
 
 
 class AgentRunner:
@@ -41,6 +57,10 @@ class AgentRunner:
         self.agent = agent
         self.iteration = 0
         self.logger = get_logger(__name__, agent=agent.name)
+        self._tool_result_cache: dict[str, str] = {}
+        self._tool_result_hash_by_key: dict[str, str] = {}
+        self._total_input_tokens = 0
+        self._total_output_tokens = 0
 
     async def run(self) -> str:
         """
@@ -52,6 +72,16 @@ class AgentRunner:
         config = self.agent.config
 
         for self.iteration in range(config.max_iterations):
+            if config.max_total_tokens > 0:
+                total_tokens = self._total_input_tokens + self._total_output_tokens
+                if total_tokens >= config.max_total_tokens:
+                    self.logger.warning(
+                        "Token budget exceeded",
+                        total_tokens=total_tokens,
+                        max_total_tokens=config.max_total_tokens,
+                    )
+                    return "Error: Token budget exceeded before completing the task."
+
             if config.verbose:
                 self.logger.info(f"Iteration {self.iteration + 1}/{config.max_iterations}")
 
@@ -68,7 +98,7 @@ class AgentRunner:
 
                 # Handle tool use
                 if response.stop_reason == "tool_use":
-                    self._handle_tool_use(response)
+                    await self._handle_tool_use(response)
                     continue
 
                 # Unexpected stop reason
@@ -100,7 +130,7 @@ class AgentRunner:
         config = self.agent.config
 
         # Check token estimate and truncate if needed (proactive to reduce cost)
-        max_context_tokens = 100000
+        max_context_tokens = config.max_context_tokens
         estimated_tokens = self.agent.message_history.estimated_tokens
 
         if estimated_tokens > max_context_tokens:
@@ -132,6 +162,8 @@ class AgentRunner:
         )
 
         # Always log token usage for cost monitoring
+        self._total_input_tokens += response.usage.input_tokens
+        self._total_output_tokens += response.usage.output_tokens
         self.logger.info(
             "Claude usage: input_tokens=%s output_tokens=%s",
             response.usage.input_tokens,
@@ -161,19 +193,18 @@ class AgentRunner:
                 text_content = block.text
         return tool_uses, text_content
 
-    def _execute_one_tool(self, tool_use: ToolUse) -> tuple[str, str, bool]:
+    async def _execute_one_tool(self, tool_use: ToolUse) -> tuple[str, str, bool]:
         """Run a single tool and return (tool_use_id, result, is_error)."""
         if self.agent.config.verbose:
             self.logger.info(f"Calling tool: {tool_use.name}", input=tool_use.input)
         else:
             print(f"  → Calling: {tool_use.name}")
         try:
-            result = self.agent.execute_tool(tool_use.name, tool_use.input)
-            is_error = result.startswith("Error:")
-            if len(result) > TOOL_RESULT_MAX_CHARS:
+            result, is_error = await self._execute_tool_with_cache(tool_use)
+            if len(result) > self.agent.config.tool_result_max_chars:
                 result = (
-                    result[:TOOL_RESULT_MAX_CHARS]
-                    + f"\n\n[... truncated {len(result) - TOOL_RESULT_MAX_CHARS} chars ...]"
+                    result[: self.agent.config.tool_result_max_chars]
+                    + f"\n\n[... truncated {len(result) - self.agent.config.tool_result_max_chars} chars ...]"
                 )
         except Exception as e:
             result = f"Error: {str(e)}"
@@ -183,7 +214,92 @@ class AgentRunner:
             self.logger.debug(f"Tool result: {preview}")
         return tool_use.id, result, is_error
 
-    def _handle_tool_use(self, response: Any) -> None:
+    async def _execute_tool_with_cache(self, tool_use: ToolUse) -> tuple[str, bool]:
+        """
+        Execute tool with idempotent caching and de-duplication.
+
+        Returns:
+            Tuple of (result, is_error)
+        """
+        config = self.agent.config
+        cache_key = self._tool_cache_key(tool_use)
+
+        if config.dedupe_tool_results and tool_use.name in IDEMPOTENT_TOOLS:
+            cached = self._tool_result_cache.get(cache_key)
+            cached_hash = self._tool_result_hash_by_key.get(cache_key)
+            if cached is not None:
+                if cached.startswith("Error:"):
+                    return cached, True
+                if cached_hash and self.agent.message_history.has_tool_result_hash(cached_hash):
+                    return (
+                        f"[Cached result reused for tool '{tool_use.name}' with identical inputs. "
+                        "Refer to the earlier tool result in this conversation.]",
+                        False,
+                    )
+                return cached, cached.startswith("Error:")
+
+        if tool_use.name in IDEMPOTENT_TOOLS:
+            cached_value = await self._get_persistent_tool_cache(cache_key)
+            if cached_value is not None:
+                cached_text = str(cached_value)
+                cached_hash = self._hash_text(cached_text)
+                if self.agent.message_history.has_tool_result_hash(cached_hash):
+                    return (
+                        f"[Cached result reused for tool '{tool_use.name}' with identical inputs. "
+                        "Refer to the earlier tool result in this conversation.]",
+                        False,
+                    )
+                self._tool_result_cache[cache_key] = cached_text
+                self._tool_result_hash_by_key[cache_key] = cached_hash
+                return cached_text, cached_text.startswith("Error:")
+
+        result = self.agent.execute_tool(tool_use.name, tool_use.input)
+        is_error = result.startswith("Error:")
+
+        if config.dedupe_tool_results and tool_use.name in IDEMPOTENT_TOOLS:
+            self._tool_result_cache[cache_key] = result
+            self._tool_result_hash_by_key[cache_key] = self._hash_text(result)
+            await self._set_persistent_tool_cache(cache_key, result)
+
+        return result, is_error
+
+    async def _get_persistent_tool_cache(self, cache_key: str) -> Any | None:
+        try:
+            cache = await get_cache_manager()
+            if not cache.cache_settings.enabled:
+                return None
+            return await cache.get(cache_key, CacheType.TOOL_RESULT)
+        except Exception:
+            return None
+
+    async def _set_persistent_tool_cache(self, cache_key: str, value: str) -> None:
+        try:
+            cache = await get_cache_manager()
+            if not cache.cache_settings.enabled:
+                return
+            await cache.set(
+                cache_key,
+                value,
+                CacheType.TOOL_RESULT,
+                ttl=cache.cache_settings.tool_result_ttl,
+                metadata={"scope": "agentic_tool"},
+            )
+        except Exception:
+            return
+
+    @staticmethod
+    def _tool_cache_key(tool_use: ToolUse) -> str:
+        try:
+            payload = json.dumps(tool_use.input, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            payload = str(tool_use.input)
+        return f"{tool_use.name}:{payload}"
+
+    @staticmethod
+    def _hash_text(content: str) -> str:
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    async def _handle_tool_use(self, response: Any) -> None:
         """
         Handle tool use requests from Claude.
 
@@ -205,7 +321,9 @@ class AgentRunner:
             content=text_content,
             tool_uses=tool_uses,
         )
-        tool_results = [self._execute_one_tool(tool_use) for tool_use in tool_uses]
+        tool_results = await asyncio.gather(
+            *[self._execute_one_tool(tool_use) for tool_use in tool_uses]
+        )
         self.agent.message_history.add_tool_results(tool_results)
 
     def _extract_text_content(self, response: Any) -> str:

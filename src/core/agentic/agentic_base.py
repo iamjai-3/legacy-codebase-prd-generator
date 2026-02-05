@@ -6,6 +6,7 @@ working directory boundaries, and integration with Anthropic Claude.
 """
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from typing import Any
 
@@ -25,12 +26,28 @@ class AgenticConfig:
     working_directory: Path = field(default_factory=lambda: Path.cwd())
 
     # Maximum iterations for the agent loop (lowered to reduce token cost)
-    max_iterations: int = 25
+    max_iterations: int = field(
+        default_factory=lambda: _env_int("AGENT_MAX_ITERATIONS", 25)
+    )
 
     # Model configuration
     model: str = "claude-sonnet-4-5-20250929"
-    max_tokens: int = 4096
+    max_tokens: int = field(default_factory=lambda: _env_int("AGENT_MAX_TOKENS", 4096))
     temperature: float = 0.0
+
+    # Context handling and cost controls
+    max_context_tokens: int = field(
+        default_factory=lambda: _env_int("AGENT_MAX_CONTEXT_TOKENS", 100000)
+    )
+    max_total_tokens: int = field(
+        default_factory=lambda: _env_int("AGENT_MAX_TOTAL_TOKENS", 0)
+    )
+    tool_result_max_chars: int = field(
+        default_factory=lambda: _env_int("AGENT_TOOL_RESULT_MAX_CHARS", 20000)
+    )
+    dedupe_tool_results: bool = field(
+        default_factory=lambda: _env_bool("AGENT_DEDUPE_TOOL_RESULTS", True)
+    )
 
     # Verbose mode for debugging
     verbose: bool = False
@@ -42,6 +59,23 @@ class AgenticConfig:
         """Ensure working_directory is a Path."""
         if isinstance(self.working_directory, str):
             self.working_directory = Path(self.working_directory)
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 class AgenticAgent:

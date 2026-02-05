@@ -156,6 +156,11 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=1000, description="Text chunk size for splitting")
     chunk_overlap: int = Field(default=200, description="Overlap between chunks")
     max_retries: int = Field(default=3, description="Max retries for operations")
+    prd_context_max_chars: int = Field(
+        default=2000,
+        description="Max characters per context chunk included in PRD prompts",
+        validation_alias="PRD_CONTEXT_MAX_CHARS",
+    )
 
     # Paths
     uploads_dir: str = Field(default="./uploads", description="Upload directory")

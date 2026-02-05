@@ -320,7 +320,12 @@ class BaseAgent(ABC, Generic[T]):
             return "No additional context available."
 
         limited = contexts[:max_contexts]
-        formatted = [f"[Context {i}]\n{ctx}\n" for i, ctx in enumerate(limited, 1)]
+        max_chars = self.settings.prd_context_max_chars
+        formatted = []
+        for i, ctx in enumerate(limited, 1):
+            if max_chars > 0 and len(ctx) > max_chars:
+                ctx = ctx[:max_chars] + "\n\n[... truncated ...]"
+            formatted.append(f"[Context {i}]\n{ctx}\n")
         return "\n".join(formatted)
 
     # ========== Result Creation Methods ==========

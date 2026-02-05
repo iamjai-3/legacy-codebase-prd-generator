@@ -500,6 +500,21 @@ def migrate_agentic(
     ),
     prompt: str | None = typer.Option(None, "--prompt", "-p", help="Custom migration prompt"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Enable verbose output"),
+    max_iterations: int | None = typer.Option(
+        None, "--max-iterations", help="Max iterations for the agent loop"
+    ),
+    max_tokens: int | None = typer.Option(
+        None, "--max-tokens", help="Max tokens per LLM response"
+    ),
+    max_context_tokens: int | None = typer.Option(
+        None, "--max-context-tokens", help="Approximate context token limit before truncation"
+    ),
+    max_total_tokens: int | None = typer.Option(
+        None, "--max-total-tokens", help="Total token budget for the run (0 = no limit)"
+    ),
+    tool_result_max_chars: int | None = typer.Option(
+        None, "--tool-result-max-chars", help="Max characters returned per tool result"
+    ),
 ):
     """
     Migrate legacy codebase using the agentic AI system.
@@ -535,8 +550,17 @@ def migrate_agentic(
         config = AgenticConfig(
             working_directory=Path(output_dir),
             verbose=verbose,
-            max_iterations=50,
         )
+        if max_iterations is not None:
+            config.max_iterations = max_iterations
+        if max_tokens is not None:
+            config.max_tokens = max_tokens
+        if max_context_tokens is not None:
+            config.max_context_tokens = max_context_tokens
+        if max_total_tokens is not None:
+            config.max_total_tokens = max_total_tokens
+        if tool_result_max_chars is not None:
+            config.tool_result_max_chars = tool_result_max_chars
 
         # Create the orchestrator
         orchestrator = migration_orchestrator(

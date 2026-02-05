@@ -5,6 +5,7 @@ Manages conversation history with role-based messages, token counting,
 and serialization for the agentic tool calling loop.
 """
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -210,6 +211,7 @@ class MessageHistory:
         self.system_prompt = system_prompt
         self._messages: list[Message] = []
         self._estimated_tokens = 0
+        self._tool_result_hashes: set[str] = set()
 
     @property
     def messages(self) -> list[Message]:
@@ -225,6 +227,10 @@ class MessageHistory:
     def estimated_tokens(self) -> int:
         """Get estimated token count (rough approximation)."""
         return self._estimated_tokens
+
+    def has_tool_result_hash(self, hash_value: str) -> bool:
+        """Check if a tool result hash exists in the current history."""
+        return hash_value in self._tool_result_hashes
 
     def add_user_message(self, content: str) -> Message:
         """
@@ -288,12 +294,15 @@ class MessageHistory:
             content=content,
             is_error=is_error,
         )
+        content_hash = self._hash_text(content)
         message = Message(
             role=MessageRole.TOOL,
             content=content,
             tool_result=tool_result,
+            metadata={"tool_result_hashes": [content_hash]},
         )
         self._messages.append(message)
+        self._tool_result_hashes.add(content_hash)
         self._update_token_estimate(content)
         return message
 
@@ -343,6 +352,7 @@ class MessageHistory:
             ToolResult(tool_use_id=tid, content=content, is_error=is_error)
             for tid, content, is_error in results
         ]
+        content_hashes = [self._hash_text(content) for _, content, _ in results]
 
         # Combine content for token estimation
         combined_content = "\n".join(r[1] for r in results)
@@ -351,8 +361,10 @@ class MessageHistory:
             role=MessageRole.TOOL,
             content=combined_content,
             tool_results=tool_results,
+            metadata={"tool_result_hashes": content_hashes},
         )
         self._messages.append(message)
+        self._tool_result_hashes.update(content_hashes)
         self._update_token_estimate(combined_content)
         return message
 
@@ -377,6 +389,7 @@ class MessageHistory:
         """Clear all messages from history."""
         self._messages.clear()
         self._estimated_tokens = 0
+        self._tool_result_hashes.clear()
 
     def truncate_to_recent(self, max_messages: int = 50) -> int:
         """
@@ -408,6 +421,20 @@ class MessageHistory:
             if isinstance(msg.content, str):
                 total += len(msg.content) // 4
         self._estimated_tokens = total
+        self._recalculate_tool_result_hashes()
+
+    def _recalculate_tool_result_hashes(self) -> None:
+        """Recalculate tool result hash set from current messages."""
+        hashes: set[str] = set()
+        for msg in self._messages:
+            if msg.metadata:
+                hashes.update(msg.metadata.get("tool_result_hashes", []))
+        self._tool_result_hashes = hashes
+
+    @staticmethod
+    def _hash_text(content: str) -> str:
+        """Hash content for de-duplication tracking."""
+        return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize history to dictionary."""
