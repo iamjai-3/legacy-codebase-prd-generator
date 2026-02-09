@@ -2,17 +2,15 @@
 Agentic Base Class.
 
 Provides the foundation for agentic AI agents with tool calling capabilities,
-working directory boundaries, and integration with Anthropic Claude.
+working directory boundaries, and integration with LLM providers (OpenAI / Anthropic).
 """
 
-from dataclasses import dataclass, field
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from anthropic import Anthropic
-
-from src.config.settings import get_settings
+from src.config.settings import LLMProvider, get_settings
 from src.core.agentic.message_history import MessageHistory
 from src.core.agentic.tool_registry import ToolRegistry
 from src.utils.logging_config import get_logger
@@ -26,12 +24,10 @@ class AgenticConfig:
     working_directory: Path = field(default_factory=lambda: Path.cwd())
 
     # Maximum iterations for the agent loop (lowered to reduce token cost)
-    max_iterations: int = field(
-        default_factory=lambda: _env_int("AGENT_MAX_ITERATIONS", 25)
-    )
+    max_iterations: int = field(default_factory=lambda: _env_int("AGENT_MAX_ITERATIONS", 25))
 
-    # Model configuration
-    model: str = "claude-sonnet-4-5-20250929"
+    # Model configuration – resolved from LLM_PROVIDER in __post_init__ when None
+    model: str | None = None
     max_tokens: int = field(default_factory=lambda: _env_int("AGENT_MAX_TOKENS", 4096))
     temperature: float = 0.0
 
@@ -39,9 +35,7 @@ class AgenticConfig:
     max_context_tokens: int = field(
         default_factory=lambda: _env_int("AGENT_MAX_CONTEXT_TOKENS", 100000)
     )
-    max_total_tokens: int = field(
-        default_factory=lambda: _env_int("AGENT_MAX_TOTAL_TOKENS", 0)
-    )
+    max_total_tokens: int = field(default_factory=lambda: _env_int("AGENT_MAX_TOTAL_TOKENS", 0))
     tool_result_max_chars: int = field(
         default_factory=lambda: _env_int("AGENT_TOOL_RESULT_MAX_CHARS", 20000)
     )
@@ -56,9 +50,18 @@ class AgenticConfig:
     stop_sequences: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        """Ensure working_directory is a Path."""
+        """Ensure working_directory is a Path and resolve default model from settings."""
         if isinstance(self.working_directory, str):
             self.working_directory = Path(self.working_directory)
+
+        # Resolve model default from LLM_PROVIDER when not explicitly set
+        if self.model is None:
+            settings = get_settings()
+            provider = settings.llm.provider
+            if provider == LLMProvider.OPENAI:
+                self.model = settings.openai.model
+            else:
+                self.model = settings.anthropic.model
 
 
 def _env_int(name: str, default: int) -> int:
@@ -83,7 +86,7 @@ class AgenticAgent:
     Base class for agentic AI agents.
 
     Provides core functionality for:
-    - Anthropic Claude integration with tool calling
+    - LLM integration with tool calling (OpenAI or Anthropic)
     - Working directory boundaries for security
     - Message history management
     - Tool registration and execution
@@ -110,8 +113,11 @@ class AgenticAgent:
         self.settings = get_settings()
         self.logger = get_logger(name, agent=name)
 
-        # Initialize Anthropic client
-        self._client: Anthropic | None = None
+        # Determine provider from settings
+        self.provider: LLMProvider = self.settings.llm.provider
+
+        # Lazy-initialised LLM client (OpenAI or Anthropic)
+        self._client: Any = None
 
         # Initialize message history with system prompt
         self.message_history = MessageHistory(system_prompt=system_prompt)
@@ -123,10 +129,17 @@ class AgenticAgent:
         self._register_default_tools()
 
     @property
-    def client(self) -> Anthropic:
-        """Get or create the Anthropic client."""
+    def client(self) -> Any:
+        """Get or create the LLM client based on the configured provider."""
         if self._client is None:
-            self._client = Anthropic(api_key=self.settings.anthropic.api_key)
+            if self.provider == LLMProvider.OPENAI:
+                from openai import OpenAI
+
+                self._client = OpenAI(api_key=self.settings.openai.api_key)
+            else:
+                from anthropic import Anthropic
+
+                self._client = Anthropic(api_key=self.settings.anthropic.api_key)
         return self._client
 
     @property
@@ -210,7 +223,9 @@ class AgenticAgent:
         )
 
     def get_tools_schema(self) -> list[dict[str, Any]]:
-        """Get tool schemas for Anthropic API."""
+        """Get tool schemas in the format required by the active LLM provider."""
+        if self.provider == LLMProvider.OPENAI:
+            return self.tool_registry.to_openai_tools()
         return self.tool_registry.to_anthropic_tools()
 
     def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:

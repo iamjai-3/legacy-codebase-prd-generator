@@ -6,6 +6,7 @@ and serialization for the agentic tool calling loop.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -132,6 +133,63 @@ class Message:
             }
         )
         return {"role": "assistant", "content": content_blocks}
+
+    # --- OpenAI format methods ---
+
+    def to_openai_messages(self) -> list[dict[str, Any]]:
+        """
+        Convert to OpenAI API message format.
+
+        OpenAI uses separate 'tool' role messages for each tool result,
+        so a single Message may expand into multiple OpenAI messages.
+
+        Returns:
+            List of dicts compatible with OpenAI chat completions API
+        """
+        if self.role == MessageRole.SYSTEM:
+            return [{"role": "system", "content": self.content}]
+
+        # Tool results → one message per result with role "tool"
+        if self.role == MessageRole.TOOL and self.tool_results:
+            return [
+                {
+                    "role": "tool",
+                    "tool_call_id": tr.tool_use_id,
+                    "content": tr.content,
+                }
+                for tr in self.tool_results
+            ]
+        if self.role == MessageRole.TOOL and self.tool_result:
+            return [
+                {
+                    "role": "tool",
+                    "tool_call_id": self.tool_result.tool_use_id,
+                    "content": self.tool_result.content,
+                }
+            ]
+
+        # Assistant with tool uses
+        if self.role == MessageRole.ASSISTANT and (self.tool_uses or self.tool_use):
+            tool_calls_list = self.tool_uses or ([self.tool_use] if self.tool_use else [])
+            msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": self.content if self.content else None,
+                "tool_calls": [
+                    {
+                        "id": tu.id,
+                        "type": "function",
+                        "function": {
+                            "name": tu.name,
+                            "arguments": json.dumps(tu.input),
+                        },
+                    }
+                    for tu in tool_calls_list
+                ],
+            }
+            return [msg]
+
+        # Plain user / assistant message
+        return [{"role": self.role.value, "content": self.content}]
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize message to dictionary for persistence."""
@@ -379,6 +437,25 @@ class MessageHistory:
         for msg in self._messages:
             if msg.role != MessageRole.SYSTEM:
                 messages.append(msg.to_anthropic_message())
+        return messages
+
+    def to_openai_messages(self) -> list[dict[str, Any]]:
+        """
+        Convert history to OpenAI API message format.
+
+        The system prompt is included as the first message.
+        Tool results expand into individual messages with role 'tool'.
+
+        Returns:
+            List of messages compatible with OpenAI chat completions API
+        """
+        messages: list[dict[str, Any]] = []
+        # System prompt as first message
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+        for msg in self._messages:
+            if msg.role != MessageRole.SYSTEM:
+                messages.extend(msg.to_openai_messages())
         return messages
 
     def get_system_prompt(self) -> str:

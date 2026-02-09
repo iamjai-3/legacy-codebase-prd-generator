@@ -2,8 +2,8 @@
 Agent Runner for Agentic AI.
 
 Implements the main agent execution loop that:
-1. Sends messages to Claude with tool definitions
-2. Handles tool_use responses (including parallel tool calls)
+1. Sends messages to the LLM (OpenAI or Anthropic) with tool definitions
+2. Handles tool_use / tool_calls responses (including parallel tool calls)
 3. Executes tools and returns results
 4. Loops until task completion or max iterations
 """
@@ -13,6 +13,7 @@ import hashlib
 import json
 from typing import TYPE_CHECKING, Any
 
+from src.config.settings import LLMProvider
 from src.core.agentic.message_history import ToolUse
 from src.utils.cache_manager import CacheType, get_cache_manager
 from src.utils.logging_config import get_logger
@@ -43,8 +44,9 @@ class AgentRunner:
     """
     Executes the agentic loop for an agent.
 
-    The runner handles the interaction between the agent and Claude,
+    The runner handles the interaction between the agent and the LLM,
     managing tool calls and building up the conversation history.
+    Supports both OpenAI and Anthropic providers transparently.
     """
 
     def __init__(self, agent: "AgenticAgent") -> None:
@@ -61,6 +63,33 @@ class AgentRunner:
         self._tool_result_hash_by_key: dict[str, str] = {}
         self._total_input_tokens = 0
         self._total_output_tokens = 0
+
+    # ------------------------------------------------------------------
+    # Normalised response wrapper
+    # ------------------------------------------------------------------
+
+    class _NormalisedResponse:
+        """Provider-agnostic view of an LLM response."""
+
+        __slots__ = ("stop_reason", "text_content", "tool_uses", "input_tokens", "output_tokens")
+
+        def __init__(
+            self,
+            stop_reason: str,
+            text_content: str | None,
+            tool_uses: list[ToolUse],
+            input_tokens: int,
+            output_tokens: int,
+        ) -> None:
+            self.stop_reason = stop_reason  # "end_turn" | "tool_use"
+            self.text_content = text_content
+            self.tool_uses = tool_uses
+            self.input_tokens = input_tokens
+            self.output_tokens = output_tokens
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
 
     async def run(self) -> str:
         """
@@ -86,27 +115,26 @@ class AgentRunner:
                 self.logger.info(f"Iteration {self.iteration + 1}/{config.max_iterations}")
 
             try:
-                response = await self._call_claude()
+                nr = await self._call_llm()
 
                 # Check if we have a final text response (no tool use)
-                if response.stop_reason == "end_turn":
-                    # Extract text content
-                    text_content = self._extract_text_content(response)
-                    if text_content:
+                if nr.stop_reason == "end_turn":
+                    if nr.text_content:
+                        self.agent.message_history.add_assistant_message(content=nr.text_content)
                         self.logger.info(f"Agent completed in {self.iteration + 1} iterations")
-                        return text_content
+                        return nr.text_content
 
                 # Handle tool use
-                if response.stop_reason == "tool_use":
-                    await self._handle_tool_use(response)
+                if nr.stop_reason == "tool_use":
+                    await self._handle_tool_use(nr)
                     continue
 
-                # Unexpected stop reason
-                text_content = self._extract_text_content(response)
-                if text_content:
-                    return text_content
+                # Unexpected stop reason – return any text we got
+                if nr.text_content:
+                    self.agent.message_history.add_assistant_message(content=nr.text_content)
+                    return nr.text_content
 
-                self.logger.warning(f"Unexpected stop reason: {response.stop_reason}")
+                self.logger.warning(f"Unexpected stop reason: {nr.stop_reason}")
                 break
 
             except Exception as e:
@@ -120,16 +148,15 @@ class AgentRunner:
         )
         return "Error: Maximum iterations reached without completing the task."
 
-    async def _call_claude(self) -> Any:
-        """
-        Make a call to Claude API.
+    # ------------------------------------------------------------------
+    # LLM call dispatch
+    # ------------------------------------------------------------------
 
-        Returns:
-            The API response
-        """
+    async def _call_llm(self) -> "_NormalisedResponse":
+        """Call the configured LLM provider and return a normalised response."""
         config = self.agent.config
 
-        # Check token estimate and truncate if needed (proactive to reduce cost)
+        # Proactive context truncation
         max_context_tokens = config.max_context_tokens
         estimated_tokens = self.agent.message_history.estimated_tokens
 
@@ -140,18 +167,27 @@ class AgentRunner:
             )
             self.agent.message_history.truncate_to_recent(max_messages=20)
 
-        # Build the API request
+        if self.agent.provider == LLMProvider.OPENAI:
+            return await self._call_openai()
+        return await self._call_anthropic()
+
+    # ------------------------------------------------------------------
+    # Anthropic-specific
+    # ------------------------------------------------------------------
+
+    async def _call_anthropic(self) -> "_NormalisedResponse":
+        """Make a call to the Anthropic API and return a normalised response."""
+        config = self.agent.config
         messages = self.agent.message_history.to_anthropic_messages()
         tools = self.agent.get_tools_schema()
 
         if config.verbose:
             self.logger.debug(
-                "Calling Claude",
+                "Calling Anthropic",
                 message_count=len(messages),
                 tool_count=len(tools),
             )
 
-        # Make the API call (synchronous Anthropic client)
         response = await asyncio.to_thread(
             self.agent.client.messages.create,
             model=config.model,
@@ -161,37 +197,110 @@ class AgentRunner:
             tools=tools if tools else None,
         )
 
-        # Always log token usage for cost monitoring
-        self._total_input_tokens += response.usage.input_tokens
-        self._total_output_tokens += response.usage.output_tokens
+        # Log token usage
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+        self._total_input_tokens += input_tokens
+        self._total_output_tokens += output_tokens
         self.logger.info(
-            "Claude usage: input_tokens=%s output_tokens=%s",
-            response.usage.input_tokens,
-            response.usage.output_tokens,
+            "Anthropic usage: input_tokens=%s output_tokens=%s",
+            input_tokens,
+            output_tokens,
         )
-        if config.verbose:
-            self.logger.debug(
-                "Claude response",
-                stop_reason=response.stop_reason,
-                usage_input=response.usage.input_tokens,
-                usage_output=response.usage.output_tokens,
-            )
 
-        # DON'T add to history here - we handle it in _handle_tool_use
-        # to properly group multiple tool calls
-
-        return response
-
-    def _parse_tool_uses_from_response(self, response: Any) -> tuple[list[ToolUse], str | None]:
-        """Extract tool_use blocks and optional text from Claude response."""
+        # Parse content blocks
         tool_uses: list[ToolUse] = []
-        text_content = None
+        text_content: str | None = None
         for block in response.content:
             if block.type == "tool_use":
                 tool_uses.append(ToolUse(id=block.id, name=block.name, input=block.input))
             elif block.type == "text":
                 text_content = block.text
-        return tool_uses, text_content
+
+        # Map Anthropic stop_reason → normalised
+        stop_reason = "end_turn" if response.stop_reason == "end_turn" else "tool_use"
+
+        return self._NormalisedResponse(
+            stop_reason=stop_reason,
+            text_content=text_content,
+            tool_uses=tool_uses,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    # ------------------------------------------------------------------
+    # OpenAI-specific
+    # ------------------------------------------------------------------
+
+    async def _call_openai(self) -> "_NormalisedResponse":
+        """Make a call to the OpenAI API and return a normalised response."""
+        config = self.agent.config
+        messages = self.agent.message_history.to_openai_messages()
+        tools = self.agent.get_tools_schema()
+
+        if config.verbose:
+            self.logger.debug(
+                "Calling OpenAI",
+                message_count=len(messages),
+                tool_count=len(tools),
+            )
+
+        kwargs: dict[str, Any] = {
+            "model": config.model,
+            "max_tokens": config.max_tokens,
+            "messages": messages,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        response = await asyncio.to_thread(
+            self.agent.client.chat.completions.create,
+            **kwargs,
+        )
+
+        # Log token usage
+        input_tokens = response.usage.prompt_tokens if response.usage else 0
+        output_tokens = response.usage.completion_tokens if response.usage else 0
+        self._total_input_tokens += input_tokens
+        self._total_output_tokens += output_tokens
+        self.logger.info(
+            "OpenAI usage: prompt_tokens=%s completion_tokens=%s",
+            input_tokens,
+            output_tokens,
+        )
+
+        choice = response.choices[0]
+        message = choice.message
+
+        # Parse tool calls
+        tool_uses: list[ToolUse] = []
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                tool_uses.append(ToolUse(id=tc.id, name=tc.function.name, input=args))
+
+        text_content = message.content
+
+        # Map OpenAI finish_reason → normalised
+        if choice.finish_reason == "tool_calls" or tool_uses:
+            stop_reason = "tool_use"
+        else:
+            stop_reason = "end_turn"
+
+        return self._NormalisedResponse(
+            stop_reason=stop_reason,
+            text_content=text_content,
+            tool_uses=tool_uses,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+
+    # ------------------------------------------------------------------
+    # Tool execution helpers (shared across providers)
+    # ------------------------------------------------------------------
 
     async def _execute_one_tool(self, tool_use: ToolUse) -> tuple[str, str, bool]:
         """Run a single tool and return (tool_use_id, result, is_error)."""
@@ -299,50 +408,28 @@ class AgentRunner:
     def _hash_text(content: str) -> str:
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    async def _handle_tool_use(self, response: Any) -> None:
-        """
-        Handle tool use requests from Claude.
+    # ------------------------------------------------------------------
+    # Tool-use handling (provider-agnostic, works on normalised response)
+    # ------------------------------------------------------------------
 
-        When Claude returns multiple tool_use blocks, we need to:
-        1. Add ONE assistant message with ALL tool_use blocks
-        2. Execute all tools
-        3. Add ONE user message with ALL tool_result blocks
-
-        Args:
-            response: The API response containing tool use
+    async def _handle_tool_use(self, nr: "_NormalisedResponse") -> None:
         """
-        tool_uses, text_content = self._parse_tool_uses_from_response(response)
-        if not tool_uses:
-            if text_content:
-                self.agent.message_history.add_assistant_message(content=text_content)
+        Handle tool use from a normalised response.
+
+        1. Record the assistant message with tool_use blocks in history
+        2. Execute all tools (in parallel)
+        3. Record tool results in history
+        """
+        if not nr.tool_uses:
+            if nr.text_content:
+                self.agent.message_history.add_assistant_message(content=nr.text_content)
             return
 
         self.agent.message_history.add_assistant_message_with_tools(
-            content=text_content,
-            tool_uses=tool_uses,
+            content=nr.text_content,
+            tool_uses=nr.tool_uses,
         )
         tool_results = await asyncio.gather(
-            *[self._execute_one_tool(tool_use) for tool_use in tool_uses]
+            *[self._execute_one_tool(tool_use) for tool_use in nr.tool_uses]
         )
         self.agent.message_history.add_tool_results(tool_results)
-
-    def _extract_text_content(self, response: Any) -> str:
-        """
-        Extract text content from Claude's response.
-
-        Args:
-            response: The API response
-
-        Returns:
-            Text content or empty string
-        """
-        # Also add pure text responses to history
-        has_tool_use = any(block.type == "tool_use" for block in response.content)
-
-        for block in response.content:
-            if block.type == "text":
-                # Only add to history if this is a pure text response (no tools)
-                if not has_tool_use:
-                    self.agent.message_history.add_assistant_message(content=block.text)
-                return block.text
-        return ""

@@ -29,6 +29,13 @@ Goal: migrate legacy Java code to modern .NET backend and React frontend with 10
 CRITICAL: Knowledge-first. Before generating code, call `get_migration_playbook` and
 gather all required knowledge via tools. Follow the playbook order strictly.
 
+## EXECUTION RULES - READ CAREFULLY
+- You MUST keep calling tools until EVERY file is generated. Do NOT stop early.
+- Do NOT summarize progress. Do NOT explain what you will do next. Just DO it.
+- After writing a file, immediately proceed to write the next file.
+- You are NOT done until ALL backend layers AND ALL frontend layers have been written.
+- NEVER return a text response until every single file has been written via write_file.
+
 Rules:
 1. Only generate code files (no docs/README/manifest).
 2. Always follow conversion templates for output format.
@@ -83,21 +90,22 @@ You can:
 - Entity-to-table mappings correct
 - UI matches screenshots
 
-## Output Structure (from templates)
+## Output Structure (all paths are RELATIVE to the working directory)
+When calling `write_file`, use paths exactly as shown below (do NOT prefix with "output/" or any parent):
 ```
-output/
-├── backend/
-│   ├── {ProjectName}.Data/Entities/
-│   ├── {ProjectName}.Data/Repositories/
-│   ├── {ProjectName}.Business/Services/
-│   ├── {ProjectName}.Business/DTOs/
-│   └── {ProjectName}.API/Controllers/
-└── frontend/
-    ├── components/
-    ├── pages/
-    ├── services/
-    └── types/
+backend/
+├── {ProjectName}.Data/Entities/
+├── {ProjectName}.Data/Repositories/
+├── {ProjectName}.Business/Services/
+├── {ProjectName}.Business/DTOs/
+└── {ProjectName}.API/Controllers/
+frontend/
+├── components/
+├── pages/
+├── services/
+└── types/
 ```
+Example: write_file(filepath="backend/LE11.Data/Entities/SomeEntity.cs", content="...")
 
 ## Critical Rules
 1. Only generate code files.
@@ -106,6 +114,8 @@ output/
 4. 100% parity with legacy system behavior.
 5. Use Oracle→PostgreSQL mappings for entities.
 6. Inline code comments only.
+7. **DO NOT STOP** until ALL backend AND frontend files are written.
+8. Do NOT return summaries or explanations between steps — just keep writing files.
 """
 
 
@@ -173,28 +183,37 @@ class MigrationOrchestrator(AgenticAgent):
 
         self.tool_registry.register(
             name="get_file_content",
-            description="Read the contents of a file.",
+            description="Read the contents of a file (path relative to output directory).",
             parameters=[
                 ToolParameter(
                     name="filepath",
                     type="string",
-                    description="Path to the file to read",
+                    description="Relative path to the file (e.g. 'backend/LE11.Data/Entities/Foo.cs')",
                     required=True,
                 ),
             ],
             function=lambda **kwargs: file_tools.get_file_content(
-                str(self.output_dir), kwargs["filepath"]
+                str(self.output_dir), self._normalize_write_path(kwargs["filepath"])
             ),
         )
 
         self.tool_registry.register(
             name="write_file",
-            description="Write content to a file. Creates parent directories if needed.",
+            description=(
+                "Write content to a file. Creates parent directories if needed. "
+                "The filepath MUST be relative to the output directory "
+                "(e.g. 'backend/LE11.Data/Entities/Foo.cs', NOT 'output/backend/...'). "
+                "Do NOT prefix with 'output/' or 'output/agentic/'."
+            ),
             parameters=[
                 ToolParameter(
                     name="filepath",
                     type="string",
-                    description="Path to the file to write",
+                    description=(
+                        "Relative path within the output directory "
+                        "(e.g. 'backend/LE11.Data/Entities/SomeEntity.cs'). "
+                        "Do NOT include 'output/' prefix."
+                    ),
                     required=True,
                 ),
                 ToolParameter(
@@ -205,7 +224,9 @@ class MigrationOrchestrator(AgenticAgent):
                 ),
             ],
             function=lambda **kwargs: file_tools.write_file(
-                str(self.output_dir), kwargs["filepath"], kwargs["content"]
+                str(self.output_dir),
+                self._normalize_write_path(kwargs["filepath"]),
+                kwargs["content"],
             ),
         )
 
@@ -494,9 +515,45 @@ class MigrationOrchestrator(AgenticAgent):
             ),
         )
 
+    def _normalize_write_path(self, filepath: str) -> str:
+        """
+        Strip leading directory segments that duplicate the output directory.
+
+        LLMs often include 'output/', 'output/agentic/', or 'agentic/' prefixes
+        even though write_file already resolves relative to the output directory.
+        This safety net strips those prefixes to avoid nested duplicates.
+        """
+        # Normalise to forward slashes and strip leading ./
+        cleaned = filepath.replace("\\", "/").lstrip("./")
+
+        # Build a list of prefixes that the LLM might incorrectly include.
+        # E.g. for output_dir = "output/agentic" → try "output/agentic/", "output/", "agentic/"
+        parts = str(self.output_dir).replace("\\", "/").strip("/").split("/")
+        prefixes_to_strip: list[str] = []
+        # full path prefix: "output/agentic/"
+        if len(parts) > 1:
+            prefixes_to_strip.append("/".join(parts) + "/")
+        # each part individually: "output/", "agentic/"
+        for part in parts:
+            prefixes_to_strip.append(part + "/")
+
+        # Strip the first matching prefix (only once)
+        for prefix in prefixes_to_strip:
+            if cleaned.lower().startswith(prefix.lower()):
+                cleaned = cleaned[len(prefix) :]
+                break
+
+        return cleaned or filepath
+
+    # Maximum number of auto-continuation rounds when the LLM stops early
+    _MAX_CONTINUATIONS = 5
+
     async def migrate(self, prompt: str | None = None) -> str:
         """
         Run the migration process.
+
+        Automatically continues the agent if it stops before generating
+        a complete backend + frontend codebase.
 
         Args:
             prompt: Optional custom prompt to guide the migration
@@ -529,20 +586,20 @@ Execute these tools in order before generating ANY code:
 
 ## STEP 2: GENERATE BACKEND CODE
 
-Using the backend conversion template format:
-- Create {self.form_name}.Data/Entities/ - EF Core entities matching DB schema
-- Create {self.form_name}.Data/Repositories/ - Data access layer
-- Create {self.form_name}.Business/Services/ - Business logic
-- Create {self.form_name}.Business/DTOs/ - Data transfer objects
-- Create {self.form_name}.API/Controllers/ - REST endpoints
+Using the backend conversion template format, write files with RELATIVE paths:
+- `backend/{self.form_name}.Data/Entities/` - EF Core entities matching DB schema
+- `backend/{self.form_name}.Data/Repositories/` - Data access layer
+- `backend/{self.form_name}.Business/Services/` - Business logic
+- `backend/{self.form_name}.Business/DTOs/` - Data transfer objects
+- `backend/{self.form_name}.API/Controllers/` - REST endpoints
 
 ## STEP 3: GENERATE FRONTEND CODE
 
-Using the frontend conversion template format:
-- Create components matching UI screenshots
-- Create pages for each form screen
-- Create API services to call backend
-- Create TypeScript types
+Using the frontend conversion template format, write files with RELATIVE paths:
+- `frontend/components/` - React components matching legacy UI
+- `frontend/pages/` - Pages for each form screen
+- `frontend/services/` - API services to call backend
+- `frontend/types/` - TypeScript types
 
 ## CRITICAL - ONLY CODE FILES:
 - Generate ONLY .cs, .tsx, .ts, .json, .csproj files
@@ -556,7 +613,91 @@ Using the frontend conversion template format:
 - Follow exact template output structure
 - Inline comments only (no separate doc files)
 
+## IMPORTANT: DO NOT STOP EARLY
+- You MUST generate ALL backend files (Entities, Repositories, Services, DTOs, Controllers)
+  AND ALL frontend files (components, pages, services, types) before finishing.
+- Do NOT return text explanations between files. Just keep calling write_file.
+- After writing each file, immediately write the next one.
+
 START by calling `get_all_form_knowledge` to gather knowledge.
 """
 
-        return await self.send_message(migration_prompt)
+        # --- Initial run ---
+        result = await self.send_message(migration_prompt)
+
+        # --- Auto-continuation if the LLM stopped early ---
+        for continuation in range(self._MAX_CONTINUATIONS):
+            if self._is_migration_complete():
+                self.logger.info("Migration output looks complete.")
+                break
+
+            missing = self._describe_missing_output()
+            self.logger.warning(
+                "Migration incomplete after round %s. Missing: %s. Sending continuation.",
+                continuation + 1,
+                missing,
+            )
+
+            continuation_prompt = (
+                f"You stopped before the migration was complete. "
+                f"Missing output: {missing}\n\n"
+                f"Continue generating the remaining files NOW. "
+                f"Do NOT repeat files already written. "
+                f"Do NOT explain — just call write_file for every remaining file."
+            )
+            result = await self.send_message(continuation_prompt)
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Completion detection helpers
+    # ------------------------------------------------------------------
+
+    def _is_migration_complete(self) -> bool:
+        """
+        Check whether both backend and frontend directories contain generated files.
+        """
+        return self._count_files("backend") > 0 and self._count_files("frontend") > 0
+
+    def _count_files(self, subdir: str) -> int:
+        """Count code files (non-hidden) in a subdirectory of the output."""
+        target = self.output_dir / subdir
+        if not target.exists():
+            return 0
+        return sum(1 for f in target.rglob("*") if f.is_file() and not f.name.startswith("."))
+
+    def _describe_missing_output(self) -> str:
+        """Return a human-readable description of what's missing."""
+        parts: list[str] = []
+        be_count = self._count_files("backend")
+        fe_count = self._count_files("frontend")
+
+        if be_count == 0:
+            parts.append(
+                "backend has NO files (need Entities, Repositories, Services, DTOs, Controllers)"
+            )
+        else:
+            # Check for expected subdirectory patterns
+            be_path = self.output_dir / "backend"
+            has_services = any(be_path.rglob("*Service*"))
+            has_controllers = any(be_path.rglob("*Controller*"))
+            has_dtos = any(be_path.rglob("*Dto*")) or any(be_path.rglob("*DTO*"))
+            if not has_services:
+                parts.append("backend missing Services")
+            if not has_controllers:
+                parts.append("backend missing Controllers")
+            if not has_dtos:
+                parts.append("backend missing DTOs")
+
+        if fe_count == 0:
+            parts.append("frontend has NO files (need components, pages, services, types)")
+        else:
+            fe_path = self.output_dir / "frontend"
+            has_components = any(fe_path.rglob("*.tsx"))
+            has_types = any(fe_path.rglob("*.ts"))
+            if not has_components:
+                parts.append("frontend missing React components (.tsx)")
+            if not has_types:
+                parts.append("frontend missing TypeScript types (.ts)")
+
+        return "; ".join(parts) if parts else "unknown gaps"

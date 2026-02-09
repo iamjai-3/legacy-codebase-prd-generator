@@ -503,9 +503,7 @@ def migrate_agentic(
     max_iterations: int | None = typer.Option(
         None, "--max-iterations", help="Max iterations for the agent loop"
     ),
-    max_tokens: int | None = typer.Option(
-        None, "--max-tokens", help="Max tokens per LLM response"
-    ),
+    max_tokens: int | None = typer.Option(None, "--max-tokens", help="Max tokens per LLM response"),
     max_context_tokens: int | None = typer.Option(
         None, "--max-context-tokens", help="Approximate context token limit before truncation"
     ),
@@ -524,7 +522,8 @@ def migrate_agentic(
     2. Search the vector knowledge base for business logic
     3. Generate complete .NET backend and React frontend code
 
-    The agent uses Anthropic Claude for reasoning and OpenAI for embeddings.
+    The agent uses the configured LLM provider (OpenAI or Anthropic) for reasoning
+    and OpenAI for embeddings.
 
     Example:
         prd-agent migrate-agentic -f le11 -o ./output/agentic
@@ -540,7 +539,9 @@ def migrate_agentic(
         )
     )
 
-    console.print("\n[dim]Using Anthropic Claude for reasoning[/dim]")
+    provider = settings.llm.provider.value
+    model = settings.openai.model if provider == "openai" else settings.anthropic.model
+    console.print(f"\n[dim]Using {provider} ({model}) for reasoning[/dim]")
     console.print(f"[dim]Output directory: {output_dir}[/dim]\n")
 
     async def run_agentic_migration():
@@ -577,7 +578,7 @@ def migrate_agentic(
             task = progress.add_task("Running agentic migration...", total=None)
 
             try:
-                result = await orchestrator.migrate(prompt)
+                await orchestrator.migrate(prompt)
                 progress.update(task, description="Migration complete!")
 
             except Exception as e:
@@ -585,31 +586,39 @@ def migrate_agentic(
                 console.print(f"\n[red]✗ Migration error:[/red] {str(e)}")
                 raise typer.Exit(1)
 
-        # Display result
-        console.print("\n[green]✓ Agentic migration complete![/green]\n")
-        console.print(
-            Panel(
-                result[:2000] + "..." if len(result) > 2000 else result,
-                title="Agent Response",
-                border_style="green",
-            )
-        )
-
-        # Show generated files
+        # Show generated files summary
         output_path = Path(output_dir)
-        if output_path.exists():
-            table = Table(title="Generated Files")
-            table.add_column("Directory", style="cyan")
-            table.add_column("Files", style="green")
+        total_files = 0
+        file_rows: list[tuple[str, int]] = []
 
+        if output_path.exists():
             for subdir in ["backend", "frontend"]:
                 subdir_path = output_path / subdir
                 if subdir_path.exists():
-                    files = list(subdir_path.rglob("*"))
-                    file_count = len([f for f in files if f.is_file()])
-                    table.add_row(subdir, str(file_count))
+                    files = [
+                        f
+                        for f in subdir_path.rglob("*")
+                        if f.is_file() and not f.name.startswith(".")
+                    ]
+                    file_rows.append((subdir, len(files)))
+                    total_files += len(files)
 
+        if total_files > 0:
+            console.print(
+                f"\n[green]✓ Migration complete — {total_files} files generated.[/green]\n"
+            )
+        else:
+            console.print("\n[yellow]⚠ Migration finished but no files were generated.[/yellow]\n")
+
+        if file_rows:
+            table = Table(title="Generated Files")
+            table.add_column("Directory", style="cyan")
+            table.add_column("Files", style="green")
+            for subdir_name, count in file_rows:
+                table.add_row(subdir_name, str(count))
             console.print(table)
+
+        console.print(f"\n[dim]Output: {output_dir}[/dim]")
 
     asyncio.run(run_agentic_migration())
 
