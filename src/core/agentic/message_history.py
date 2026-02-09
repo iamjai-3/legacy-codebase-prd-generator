@@ -139,6 +139,96 @@ class Message:
             "content": self.content,
         }
 
+    def to_openai_message(self) -> dict[str, Any] | list[dict[str, Any]]:
+        """
+        Convert to OpenAI API message format.
+
+        Returns:
+            Dict or list of dicts compatible with OpenAI chat completions API.
+            Tool results return a list because each tool result is a separate message in OpenAI.
+        """
+        import json
+
+        if self.role == MessageRole.SYSTEM:
+            return {"role": "system", "content": self.content}
+
+        # Handle multiple tool results - OpenAI needs separate messages per tool result
+        if self.role == MessageRole.TOOL and self.tool_results:
+            return [
+                {
+                    "role": "tool",
+                    "tool_call_id": tr.tool_use_id,
+                    "content": tr.content,
+                }
+                for tr in self.tool_results
+            ]
+
+        # Handle single tool result
+        if self.role == MessageRole.TOOL and self.tool_result:
+            return [
+                {
+                    "role": "tool",
+                    "tool_call_id": self.tool_result.tool_use_id,
+                    "content": (
+                        self.tool_result.content
+                        if isinstance(self.tool_result.content, str)
+                        else str(self.tool_result.content)
+                    ),
+                }
+            ]
+
+        # Handle multiple tool uses (parallel tool calls)
+        if self.role == MessageRole.ASSISTANT and self.tool_uses:
+            tool_calls = []
+            for tu in self.tool_uses:
+                tool_calls.append(
+                    {
+                        "id": tu.id,
+                        "type": "function",
+                        "function": {
+                            "name": tu.name,
+                            "arguments": json.dumps(tu.input),
+                        },
+                    }
+                )
+            msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": (
+                    self.content
+                    if self.content and isinstance(self.content, str) and self.content.strip()
+                    else None
+                ),
+                "tool_calls": tool_calls,
+            }
+            return msg
+
+        # Handle single tool use
+        if self.role == MessageRole.ASSISTANT and self.tool_use:
+            msg = {
+                "role": "assistant",
+                "content": (
+                    self.content
+                    if self.content and isinstance(self.content, str) and self.content.strip()
+                    else None
+                ),
+                "tool_calls": [
+                    {
+                        "id": self.tool_use.id,
+                        "type": "function",
+                        "function": {
+                            "name": self.tool_use.name,
+                            "arguments": json.dumps(self.tool_use.input),
+                        },
+                    }
+                ],
+            }
+            return msg
+
+        return {
+            "role": self.role.value if self.role != MessageRole.TOOL else "user",
+            "content": self.content,
+        }
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize message to dictionary for persistence."""
         return {
@@ -374,6 +464,29 @@ class MessageHistory:
         for msg in self._messages:
             if msg.role != MessageRole.SYSTEM:
                 messages.append(msg.to_anthropic_message())
+        return messages
+
+    def to_openai_messages(self) -> list[dict[str, Any]]:
+        """
+        Convert history to OpenAI API message format.
+
+        Returns:
+            List of messages compatible with OpenAI chat completions API
+        """
+        messages = []
+        # OpenAI includes system prompt as a message
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+
+        for msg in self._messages:
+            if msg.role == MessageRole.SYSTEM:
+                continue  # Already added above
+            result = msg.to_openai_message()
+            # Tool results can return a list of messages in OpenAI format
+            if isinstance(result, list):
+                messages.extend(result)
+            else:
+                messages.append(result)
         return messages
 
     def get_system_prompt(self) -> str:

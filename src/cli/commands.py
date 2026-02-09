@@ -497,12 +497,13 @@ def migrate_agentic(
     2. Search the vector knowledge base for business logic
     3. Generate complete .NET backend and React frontend code
 
-    The agent uses Anthropic Claude for reasoning and OpenAI for embeddings.
+    The agent uses the configured LLM provider (OpenAI or Anthropic) for reasoning.
 
     Example:
         prd-agent migrate-agentic -f le11 -o ./output/agentic
         prd-agent migrate-agentic -f le11 --verbose
     """
+    from src.config.settings import LLMProvider
     from src.core.agentic import AgenticConfig
     from src.core.migration import get_migration_orchestrator
 
@@ -513,7 +514,13 @@ def migrate_agentic(
         )
     )
 
-    console.print("\n[dim]Using Anthropic Claude for reasoning[/dim]")
+    provider = settings.llm.provider
+    if provider == LLMProvider.ANTHROPIC:
+        provider_label = f"Anthropic Claude ({settings.anthropic.model})"
+    else:
+        provider_label = f"OpenAI ({settings.openai.model})"
+
+    console.print(f"\n[dim]Using {provider_label} for reasoning[/dim]")
     console.print(f"[dim]Output directory: {output_dir}[/dim]\n")
 
     async def run_agentic_migration():
@@ -524,6 +531,7 @@ def migrate_agentic(
             working_directory=Path(output_dir),
             verbose=verbose,
             max_iterations=50,
+            required_tools=["write_file"],
         )
 
         # Create the orchestrator

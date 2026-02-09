@@ -41,13 +41,8 @@ class Tool:
     parameters: list[ToolParameter] = field(default_factory=list)
     function: Callable[..., str] | None = None
 
-    def to_anthropic_schema(self) -> dict[str, Any]:
-        """
-        Convert tool to Anthropic tool schema format.
-
-        Returns:
-            Dict compatible with Anthropic tools API
-        """
+    def _build_parameters_schema(self) -> tuple[dict[str, Any], list[str]]:
+        """Build the properties and required list from parameters."""
         properties = {}
         required = []
 
@@ -65,6 +60,17 @@ class Tool:
             if param.required:
                 required.append(param.name)
 
+        return properties, required
+
+    def to_anthropic_schema(self) -> dict[str, Any]:
+        """
+        Convert tool to Anthropic tool schema format.
+
+        Returns:
+            Dict compatible with Anthropic tools API
+        """
+        properties, required = self._build_parameters_schema()
+
         return {
             "name": self.name,
             "description": self.description,
@@ -74,6 +80,30 @@ class Tool:
                 "required": required,
             },
         }
+
+    def to_openai_schema(self) -> dict[str, Any]:
+        """
+        Convert tool to OpenAI tool schema format.
+
+        Returns:
+            Dict compatible with OpenAI tools API
+        """
+        properties, required = self._build_parameters_schema()
+
+        schema: dict[str, Any] = {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            },
+        }
+
+        return schema
 
     def validate_arguments(self, arguments: dict[str, Any]) -> tuple[bool, str]:
         """
@@ -279,6 +309,15 @@ class ToolRegistry:
             List of tool schemas for Anthropic messages API
         """
         return [tool.to_anthropic_schema() for tool in self._tools.values()]
+
+    def to_openai_tools(self) -> list[dict[str, Any]]:
+        """
+        Convert all tools to OpenAI API format.
+
+        Returns:
+            List of tool schemas for OpenAI chat completions API
+        """
+        return [tool.to_openai_schema() for tool in self._tools.values()]
 
     def unregister(self, name: str) -> bool:
         """

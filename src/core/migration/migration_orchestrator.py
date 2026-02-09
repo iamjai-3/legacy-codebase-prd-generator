@@ -35,7 +35,7 @@ You have access to tools to:
 2. **Database Schema** - Access legacy/target schema mappings and Oracle→PostgreSQL mappings
 3. **Export Templates** - Use exact output format templates for BE/FE code
 4. **Search Codebase** - Find relevant legacy code and business logic
-5. **Write Files** - Generate new code files in the output directory
+5. **Write Files** - Generate new code files in the output directory using `write_file`
 
 ## MANDATORY Migration Process (Execute in Order)
 
@@ -57,14 +57,14 @@ You have access to tools to:
 3. `get_business_logic` - Extract documented business rules
 
 ### Step 4: Generate Backend (.NET) FIRST
-Using the conversion template format:
+Using the conversion template format, call `write_file` for each file:
 - Generate Entities matching DB schema (use Oracle→PostgreSQL mappings)
 - Create Repositories with EF Core patterns
 - Implement Services preserving ALL business logic
 - Create Controllers with RESTful endpoints
 
 ### Step 5: Generate Frontend (React)
-Using the conversion template format:
+Using the conversion template format, call `write_file` for each file:
 - Analyze UI screenshots with `list_screenshots`
 - Generate React components matching legacy UI
 - Implement form validation matching legacy rules
@@ -82,6 +82,7 @@ Using the conversion template format:
 4. **100% Parity with legacy system behavior**
 5. **Use Oracle→PostgreSQL type mappings for entities**
 6. **Code comments only** - Add inline comments in code, NOT separate doc files
+7. **You MUST call `write_file` to create every output file** - do not finish without writing files
 
 ## Output Structure (FROM TEMPLATES)
 ```
@@ -508,20 +509,20 @@ Execute these tools in order before generating ANY code:
 
 ## STEP 2: GENERATE BACKEND CODE
 
-Using the backend conversion template format:
-- Create {self.form_name}.Data/Entities/ - EF Core entities matching DB schema
-- Create {self.form_name}.Data/Repositories/ - Data access layer
-- Create {self.form_name}.Business/Services/ - Business logic
-- Create {self.form_name}.Business/DTOs/ - Data transfer objects
-- Create {self.form_name}.API/Controllers/ - REST endpoints
+Using the backend conversion template format, call `write_file` to create:
+- backend/{self.form_name}.Data/Entities/ - EF Core entities matching DB schema
+- backend/{self.form_name}.Data/Repositories/ - Data access layer
+- backend/{self.form_name}.Business/Services/ - Business logic
+- backend/{self.form_name}.Business/DTOs/ - Data transfer objects
+- backend/{self.form_name}.API/Controllers/ - REST endpoints
 
 ## STEP 3: GENERATE FRONTEND CODE
 
-Using the frontend conversion template format:
-- Create components matching UI screenshots
-- Create pages for each form screen
-- Create API services to call backend
-- Create TypeScript types
+Using the frontend conversion template format, call `write_file` to create:
+- frontend/components/ - React components matching UI screenshots
+- frontend/pages/ - Pages for each form screen
+- frontend/services/ - API services to call backend
+- frontend/types/ - TypeScript type definitions
 
 ## CRITICAL - ONLY CODE FILES:
 - Generate ONLY .cs, .tsx, .ts, .json, .csproj files
@@ -535,7 +536,7 @@ Using the frontend conversion template format:
 - Follow exact template output structure
 - Inline comments only (no separate doc files)
 
-START by calling `get_all_form_knowledge` to gather knowledge.
+START by calling `get_all_form_knowledge` to gather knowledge, then generate ALL files.
 """
 
         return await self.send_message(migration_prompt)
