@@ -9,97 +9,11 @@ from pathlib import Path
 
 from src.core.agentic.agentic_base import AgenticAgent, AgenticConfig
 from src.core.agentic.tool_registry import ToolParameter
+from src.prompts.loader import load_prompt
 from src.tools import code_tools, database_tools, file_tools, minio_tools
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-
-CODE_GENERATION_SYSTEM_PROMPT = """You are a backend code migration specialist.
-Your job is to migrate legacy Java business logic to modern .NET Core applications.
-
-## Your Task
-1. Analyze legacy Java code to understand business logic
-2. Identify validation rules, calculations, and workflows
-3. Generate .NET Core services that preserve all business logic
-4. Create API controllers with proper endpoints
-5. Ensure 100% business logic parity
-
-## .NET Code Generation Rules
-1. Use .NET 8+ patterns and best practices
-2. Use dependency injection
-3. Implement proper exception handling
-4. Add comprehensive logging
-5. Use async/await patterns
-6. Add XML documentation
-
-## Service Example
-```csharp
-using Microsoft.Extensions.Logging;
-using FleetManagement.Data.Entities;
-using FleetManagement.Data.Repositories;
-
-namespace FleetManagement.Business.Services;
-
-/// <summary>
-/// Service for vehicle management operations.
-/// </summary>
-public interface IVehicleService
-{
-    Task<Vehicle?> GetByIdAsync(int id);
-    Task<IEnumerable<Vehicle>> GetAllAsync();
-    Task<Vehicle> CreateAsync(CreateVehicleRequest request);
-    Task<Vehicle> UpdateAsync(int id, UpdateVehicleRequest request);
-    Task DeleteAsync(int id);
-}
-
-public class VehicleService : IVehicleService
-{
-    private readonly IVehicleRepository _repository;
-    private readonly ILogger<VehicleService> _logger;
-
-    public VehicleService(
-        IVehicleRepository repository,
-        ILogger<VehicleService> logger)
-    {
-        _repository = repository;
-        _logger = logger;
-    }
-
-    public async Task<Vehicle?> GetByIdAsync(int id)
-    {
-        _logger.LogDebug("Getting vehicle by id: {VehicleId}", id);
-        return await _repository.GetByIdAsync(id);
-    }
-
-    public async Task<Vehicle> CreateAsync(CreateVehicleRequest request)
-    {
-        // Validate business rules
-        await ValidateVehicleNumber(request.VehicleNumber);
-
-        var vehicle = new Vehicle
-        {
-            VehicleNumber = request.VehicleNumber,
-            Description = request.Description
-        };
-
-        return await _repository.AddAsync(vehicle);
-    }
-
-    private async Task ValidateVehicleNumber(string vehicleNumber)
-    {
-        // Business rule: Vehicle number must be unique
-        var existing = await _repository.FindByNumberAsync(vehicleNumber);
-        if (existing != null)
-        {
-            throw new BusinessException($"Vehicle number '{vehicleNumber}' already exists");
-        }
-    }
-}
-```
-
-Preserve ALL business logic from the legacy system. Every validation, calculation, and workflow must be migrated.
-"""
 
 
 class CodeGenerationAgent(AgenticAgent):
@@ -133,7 +47,7 @@ class CodeGenerationAgent(AgenticAgent):
 
         super().__init__(
             name="CodeGenerationAgent",
-            system_prompt=CODE_GENERATION_SYSTEM_PROMPT,
+            system_prompt=load_prompt("code_generation/system_prompt"),
             config=config,
         )
 
@@ -295,22 +209,6 @@ class CodeGenerationAgent(AgenticAgent):
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt = f"""
-Generate .NET Core backend services for form '{self.form_name}'.
-
-Steps:
-1. Get the form documentation to understand requirements
-2. Get the list of legacy files
-3. Search for business logic, validation rules, and calculations
-4. Generate services in backend/Services/ that preserve all logic
-5. Generate API controllers in backend/Controllers/
-6. Create request/response DTOs in backend/Models/
-
-Critical requirements:
-- 100% business logic parity with legacy system
-- Every validation rule must be implemented
-- Every calculation must be accurate
-- Every workflow must be preserved
-"""
+        prompt = load_prompt("code_generation/generate_services", form_name=self.form_name)
 
         return await self.send_message(prompt)

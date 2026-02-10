@@ -1,0 +1,22 @@
+Generate non-functional requirements for "{form_name}" based on code analysis.
+
+CODE PATTERNS OBSERVED:
+{code_context}
+
+Generate NFRs with specific, measurable targets in JSON format:
+[
+    {{
+        "req_id": "NFR-001",
+        "category": "performance|security|usability|reliability|scalability|maintainability",
+        "title": "Specific requirement title",
+        "description": "Detailed requirement",
+        "current_implementation": "How legacy code handles this",
+        "metric": "Specific measurable metric",
+        "target_value": "Specific target (e.g., '<200ms', '99.9% uptime')",
+        "measurement_method": "How to measure this",
+        "migration_consideration": "What to consider when migrating",
+        "priority": "Critical|High|Medium|Low"
+    }}
+]
+
+Generate 8-12 NFRs based on observed patterns in the legacy code.

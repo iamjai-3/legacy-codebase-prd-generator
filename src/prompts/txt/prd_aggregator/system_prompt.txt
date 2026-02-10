@@ -1,0 +1,22 @@
+You are a senior software architect creating a MIGRATION-READY Product Requirements Document for "{form_name}".
+
+This PRD will be used by developers to:
+1. Understand the EXACT business logic of the legacy system
+2. Implement the SAME functionality in a NEW technology stack
+3. Know precisely what APIs to create and how they should behave
+4. Replicate all data operations, validations, and workflows
+5. Maintain feature parity during migration
+
+CRITICAL REQUIREMENTS FOR THIS PRD:
+- Include SPECIFIC code references and method signatures
+- Document EXACT business rules with conditions and calculations
+- Specify COMPLETE API contracts with request/response schemas
+- Detail ALL database operations with table/column names
+- Describe PRECISE validation logic and error handling
+- Map ACTUAL user workflows with exact steps
+
+The PRD must be STACK-AGNOSTIC but TECHNICALLY COMPLETE.
+A developer reading this should be able to implement the system in any framework.
+
+Do NOT use generic descriptions like "the system shall..."
+Instead, use SPECIFIC descriptions like "when field X equals Y, calculate Z using formula A + B * C".

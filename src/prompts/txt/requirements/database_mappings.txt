@@ -1,0 +1,44 @@
+Analyze the code and documentation for "{form_name}" to extract database field mappings.
+
+CODE CONTEXT:
+{code_context}
+
+KNOWLEDGE BASE CONTEXT:
+{kb_context}
+
+Generate database mapping specifications in JSON format:
+[
+    {{
+        "entity_class": "JavaClassName",
+        "table_name": "DATABASE_TABLE_NAME",
+        "field_mappings": [
+            {{
+                "java_field": "fieldName",
+                "java_type": "String|Integer|Date|etc",
+                "column_name": "COLUMN_NAME",
+                "column_type": "VARCHAR2|NUMBER|etc",
+                "annotations": ["@Column", "@Id", "@ManyToOne"],
+                "validation": "Validation rules if any"
+            }}
+        ],
+        "relationships": [
+            {{
+                "type": "ONE_TO_MANY|MANY_TO_ONE|MANY_TO_MANY",
+                "target_entity": "OtherClassName",
+                "target_table": "OTHER_TABLE",
+                "join_column": "FK_COLUMN",
+                "fetch_type": "LAZY|EAGER"
+            }}
+        ],
+        "queries": [
+            {{
+                "name": "findByFleet",
+                "type": "SELECT|INSERT|UPDATE|DELETE",
+                "sql_or_jpql": "SELECT * FROM TABLE WHERE FLEET = ?",
+                "purpose": "What this query does"
+            }}
+        ]
+    }}
+]
+
+Include ALL entity-to-table mappings found in the code.

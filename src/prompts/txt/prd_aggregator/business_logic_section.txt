@@ -1,0 +1,24 @@
+Document ALL business logic for "{form_name}" for developer migration.
+
+EXTRACTED BUSINESS LOGIC FROM CODE:
+{logic_data}
+
+KNOWLEDGE BASE CONTEXT:
+{kb_context}
+
+For EACH business logic rule, document in this format:
+
+### BL-XXX: [Rule Name]
+- **Trigger**: User clicks Save / Field loses focus / etc.
+- **Condition**: `if (alertLimitDays == 0 && alertLimitLandings == 0)`
+- **Action**: Show error "Both alert limits cannot be zero"
+- **Inputs**: List fields involved with data types
+- **Outputs**: What gets saved/updated/returned
+
+IMPORTANT:
+- Use ACTUAL field names from the code (e.g., alertLimitDays, NOT "alert limit days")
+- Include EXACT validation messages from the code
+- Document EVERY if/else branch and switch case
+- Include database operations (INSERT/UPDATE/DELETE with table names)
+
+Do NOT use generic descriptions. Use SPECIFIC code references.

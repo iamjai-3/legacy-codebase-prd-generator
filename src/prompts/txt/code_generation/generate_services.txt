@@ -1,0 +1,15 @@
+Generate .NET Core backend services for form '{form_name}'.
+
+Steps:
+1. Get the form documentation to understand requirements
+2. Get the list of legacy files
+3. Search for business logic, validation rules, and calculations
+4. Generate services in backend/Services/ that preserve all logic
+5. Generate API controllers in backend/Controllers/
+6. Create request/response DTOs in backend/Models/
+
+Critical requirements:
+- 100% business logic parity with legacy system
+- Every validation rule must be implemented
+- Every calculation must be accurate
+- Every workflow must be preserved

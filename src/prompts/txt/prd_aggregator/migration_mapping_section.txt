@@ -1,0 +1,34 @@
+Create a comprehensive field mapping and migration guide for "{form_name}".
+
+DATA REQUIREMENTS:
+{data_requirements}
+
+NORMALIZED SCHEMA:
+{normalized_schema}
+
+Generate a complete migration mapping section that includes:
+
+1. **Field Mapping Tables**: For each entity, create a table showing:
+   - Legacy Field (from DTO class)
+   - Legacy Type (Java type)
+   - Legacy Column (from legacy table, if known)
+   - Normalized Field (normalized column name)
+   - Normalized Type (PostgreSQL type)
+   - Normalized Column (actual column name)
+   - Transformation Rule (how to convert: direct mapping, lookup, new field, etc.)
+   - Default Value (for new fields)
+
+2. **Primary Key Transformation**: Document how composite VARCHAR keys are transformed to INTEGER IDs
+
+3. **Migration Steps**: Step-by-step guide including:
+   - Data analysis and preparation
+   - Schema creation/verification
+   - Key transformation (if applicable)
+   - Data migration
+   - Validation
+
+4. **Validation Checklist**: Pre-migration validation requirements
+
+5. **Rollback Procedures**: How to revert if migration fails
+
+Be SPECIFIC - use actual field names, table names, and transformation rules from the data requirements above.

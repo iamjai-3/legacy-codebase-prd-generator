@@ -1,0 +1,12 @@
+Based on the context for "{form_name}":
+
+{context_text}
+
+Identify all user types who interact with this module.
+For each user type, include:
+- Role name
+- Brief description of their responsibilities
+- Primary use cases
+
+List each actor on a new line in format:
+Actor Name: Brief description

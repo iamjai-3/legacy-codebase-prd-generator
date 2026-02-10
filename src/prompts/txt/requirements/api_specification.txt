@@ -1,0 +1,35 @@
+Analyze the service layer code for "{form_name}" to extract complete API specifications.
+
+SERVICE/CONTROLLER CODE:
+{service_code}
+
+Extract EVERY API endpoint with complete specifications in JSON format:
+[
+    {{
+        "endpoint_name": "descriptiveName",
+        "http_method": "GET|POST|PUT|DELETE",
+        "path": "/api/exact/path/{{param}}",
+        "description": "What this endpoint does",
+        "request": {{
+            "path_params": [{{"name": "param", "type": "string", "description": "desc"}}],
+            "query_params": [{{"name": "param", "type": "string", "required": true}}],
+            "headers": [{{"name": "Authorization", "type": "Bearer token"}}],
+            "body": {{
+                "content_type": "application/json",
+                "schema": {{"field": "type"}},
+                "example": {{}}
+            }}
+        }},
+        "response": {{
+            "success": {{"status": 200, "schema": {{}}, "example": {{}}}},
+            "errors": [
+                {{"status": 400, "error_code": "ERR001", "message": "desc"}}
+            ]
+        }},
+        "business_logic": "Step-by-step logic executed",
+        "database_calls": ["table.operation()"],
+        "external_calls": ["service.method()"]
+    }}
+]
+
+Document EVERY endpoint, even internal ones. Include ALL parameters and response types.

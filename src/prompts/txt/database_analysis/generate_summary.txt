@@ -1,0 +1,43 @@
+Generate a comprehensive database schema summary for the "{form_name}" form/module code migration.
+
+Focus ONLY on tables and relationships used by {form_name}. This summary will be used specifically for migrating {form_name} to the new platform.
+
+DATABASE DOCUMENTATION:
+{content_preview}
+
+TABLE ANALYSIS:
+{table_analysis}
+
+MAPPING ANALYSIS:
+{mapping_analysis}
+
+Create a detailed summary that includes:
+
+1. **Schema Overview**
+   - Total tables in legacy vs target schemas
+   - Key differences and similarities
+   - Migration complexity assessment
+
+2. **Key Tables and Their Purpose**
+   - Most important tables for the application
+   - Core business entities
+   - Supporting/reference tables
+
+3. **Relationship Patterns**
+   - Common relationship types
+   - Dependency hierarchies
+   - Critical foreign key relationships
+
+4. **Migration Considerations**
+   - Tables that map directly
+   - Tables requiring transformation
+   - New tables in target schema
+   - Deprecated tables
+
+5. **Data Model Insights**
+   - Entity relationships
+   - Business logic implications
+   - API design considerations
+
+Format the summary as clear, structured markdown that will be used by developers
+for code migration and API design. Focus on actionable insights.

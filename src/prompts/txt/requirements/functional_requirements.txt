@@ -1,0 +1,49 @@
+Analyze the source code and documentation for "{form_name}" to extract SPECIFIC functional requirements.
+
+SOURCE CODE ANALYSIS:
+{code_summary}
+
+KNOWLEDGE BASE CONTEXT:
+{context_summary}
+
+For each requirement, you MUST include:
+1. EXACT business logic from the source code
+2. SPECIFIC method signatures that implement this logic
+3. PRECISE input/output specifications
+4. ALL edge cases and conditional logic
+5. Database operations with table/column names
+6. Integration calls with exact endpoints
+
+Generate requirements in JSON array format:
+[
+    {{
+        "req_id": "FR-001",
+        "title": "Specific requirement title",
+        "description": "Detailed technical description of EXACTLY what the code does",
+        "business_logic": "Step-by-step business logic extracted from code",
+        "api_specification": {{
+            "endpoint": "/api/path",
+            "method": "POST",
+            "request_body": {{"field": "type"}},
+            "response": {{"field": "type"}},
+            "errors": ["Error cases"]
+        }},
+        "database_operations": [
+            {{"operation": "SELECT/INSERT/UPDATE", "table": "TABLE_NAME", "columns": ["col1", "col2"]}}
+        ],
+        "validation_rules": ["Exact validation conditions from code"],
+        "calculations": ["Formula or algorithm used"],
+        "priority": "P0|P1|P2|P3",
+        "category": "CRUD|validation|workflow|integration|reporting|calculation",
+        "user_story": "As a [specific user role], I want [specific action] so that [business benefit]",
+        "acceptance_criteria": ["Given specific condition, When specific action, Then exact expected result"],
+        "dependencies": ["FR-XXX"]
+    }}
+]
+
+CRITICAL:
+- Extract at least 10-20 requirements covering ALL functionality
+- Include validation functions (doesChapterRecordExist, doesSubChapterRecordExist)
+- Include configuration checks (usingSubChapters, usingRepDefs)
+- Include fleet-specific operations
+- Include alert rate management operations

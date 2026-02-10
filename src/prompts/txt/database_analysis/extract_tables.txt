@@ -1,0 +1,55 @@
+Analyze the following database documentation for the "{form_name}" form/module and extract ONLY the table structures relevant to this specific form.
+
+Focus ONLY on tables mentioned in this documentation that are used by {form_name}. Ignore all other tables.
+
+DATABASE DOCUMENTATION:
+{content_preview}
+
+Extract and return a JSON object with the following structure:
+{{
+  "legacy_tables": [
+    {{
+      "name": "schema.table_name",
+      "description": "Table description",
+      "columns": [
+        {{
+          "name": "column_name",
+          "type": "data_type",
+          "nullable": true/false,
+          "primary_key": true/false,
+          "foreign_key": "referenced_table.column" or null,
+          "default": "default_value" or null
+        }}
+      ],
+      "indexes": [
+        {{
+          "name": "index_name",
+          "columns": ["col1", "col2"],
+          "unique": true/false
+        }}
+      ],
+      "relationships": [
+        {{
+          "type": "one_to_many" | "many_to_one" | "many_to_many",
+          "target_table": "schema.target_table",
+          "foreign_key": "column_name"
+        }}
+      ]
+    }}
+  ],
+  "target_tables": [
+    // Same structure as legacy_tables
+  ],
+  "tables": [
+    // Combined list of all tables
+  ]
+}}
+
+Focus on:
+- All tables mentioned in the documentation
+- Column definitions with types and constraints
+- Primary and foreign key relationships
+- Indexes and unique constraints
+- Table descriptions and purposes
+
+Return ONLY valid JSON, no markdown formatting or explanations.

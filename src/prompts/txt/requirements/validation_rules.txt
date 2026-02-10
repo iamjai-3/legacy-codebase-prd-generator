@@ -1,0 +1,32 @@
+Extract ONLY validation rules that are EXPLICITLY present in the "{form_name}" source code.
+
+CRITICAL RULES:
+1. ONLY extract validations that appear in the provided code snippets
+2. DO NOT invent generic validations (like email, password, username) unless they appear in the code
+3. Use EXACT field names, conditions, and error messages from the code
+4. If no validations are found, return an empty array []
+5. Include the EXACT source location (file:line) where the validation appears
+
+VALIDATION CODE SNIPPETS:
+{validation_code}
+
+CONTEXT FROM KNOWLEDGE BASE:
+{context_text}
+
+Generate validation rules in JSON format (ONLY for validations found in the code above):
+[
+    {{
+        "rule_id": "VR-001",
+        "field": "EXACT_FIELD_NAME_FROM_CODE",
+        "entity": "{form_name}",
+        "type": "required|format|range|business|cross-field",
+        "condition": "EXACT_CONDITION_FROM_CODE",
+        "error_message": "EXACT_MESSAGE_FROM_CODE_OR_N/A",
+        "error_code": "CODE_FROM_SOURCE_OR_EMPTY",
+        "description": "What this validation checks based on code logic",
+        "when_applied": "Inferred from code context",
+        "dependencies": ["ACTUAL_DEPENDENCIES_FROM_CODE"]
+    }}
+]
+
+If no validation logic is found in the code, return: []

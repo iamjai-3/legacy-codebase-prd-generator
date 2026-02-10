@@ -1,0 +1,17 @@
+Document ALL validation rules for "{form_name}" in implementation-ready format.
+
+EXTRACTED VALIDATION DATA:
+{validation_data}
+
+For each validation rule, document:
+1. **Rule ID**: VR-XXX format
+2. **Field/Entity**: What is being validated
+3. **Type**: required | format | range | business | cross-field | async
+4. **Condition**: Exact validation expression (e.g., "value != null && value.length >= 3 && value.length <= 50")
+5. **Error Message**: Exact user-facing message
+6. **Error Code**: API error code if applicable
+7. **When Applied**: On change | On blur | On submit | Before save
+8. **Dependencies**: Other fields that affect this validation
+9. **Implementation Notes**: Any special handling required
+
+Group validations by entity/form for easy reference during implementation.

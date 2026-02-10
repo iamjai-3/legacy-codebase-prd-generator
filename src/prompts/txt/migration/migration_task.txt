@@ -1,0 +1,47 @@
+# Migration Task: Form '{form_name}'
+
+## STEP 1: GATHER ALL KNOWLEDGE FIRST (MANDATORY)
+
+Execute these tools in order before generating ANY code:
+
+1. `get_all_form_knowledge` - Retrieve complete form knowledge
+2. `list_export_templates` - See available BE/FE templates
+3. `get_conversion_prompt("backend")` - Get .NET output format
+4. `get_oracle_to_postgres_mapping` - Get data type mappings
+
+## STEP 2: GENERATE BACKEND CODE
+
+Using the backend conversion template format, write files with RELATIVE paths:
+- `backend/{form_name}.Data/Entities/` - EF Core entities matching DB schema
+- `backend/{form_name}.Data/Repositories/` - Data access layer
+- `backend/{form_name}.Business/Services/` - Business logic
+- `backend/{form_name}.Business/DTOs/` - Data transfer objects
+- `backend/{form_name}.API/Controllers/` - REST endpoints
+
+## STEP 3: GENERATE FRONTEND CODE
+
+Using the frontend conversion template format, write files with RELATIVE paths:
+- `frontend/components/` - React components matching legacy UI
+- `frontend/pages/` - Pages for each form screen
+- `frontend/services/` - API services to call backend
+- `frontend/types/` - TypeScript types
+
+## CRITICAL - ONLY CODE FILES:
+- Generate ONLY .cs, .tsx, .ts, .json, .csproj files
+- NO documentation files (no .md, README, MANIFEST, API docs)
+- NO swagger/OpenAPI files
+- Put all documentation as inline code comments
+
+## REQUIREMENTS:
+- 100% parity with legacy business logic
+- Use Oracle→PostgreSQL type mappings for entities
+- Follow exact template output structure
+- Inline comments only (no separate doc files)
+
+## IMPORTANT: DO NOT STOP EARLY
+- You MUST generate ALL backend files (Entities, Repositories, Services, DTOs, Controllers)
+  AND ALL frontend files (components, pages, services, types) before finishing.
+- Do NOT return text explanations between files. Just keep calling write_file.
+- After writing each file, immediately write the next one.
+
+START by calling `get_all_form_knowledge` to gather knowledge.

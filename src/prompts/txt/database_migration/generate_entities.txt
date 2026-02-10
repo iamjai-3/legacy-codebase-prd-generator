@@ -1,0 +1,11 @@
+Generate Entity Framework Core entity classes for form '{form_name}'.
+
+Steps:
+1. Get the database schema
+2. Get the DB PRD for additional context
+3. For each table, create an entity class in backend/Entities/
+4. Include proper annotations, navigation properties, and documentation
+
+After generating entities, create:
+- DbContext class in backend/Data/
+- Repository interfaces and implementations in backend/Repositories/

@@ -9,59 +9,11 @@ from pathlib import Path
 
 from src.core.agentic.agentic_base import AgenticAgent, AgenticConfig
 from src.core.agentic.tool_registry import ToolParameter
+from src.prompts.loader import load_prompt
 from src.tools import code_tools, database_tools, file_tools, minio_tools
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-
-DATABASE_SYSTEM_PROMPT = """You are a database migration specialist.
-Your job is to analyze legacy database schemas and generate Entity Framework Core entities.
-
-## Your Task
-1. Analyze the database schema from the knowledge base
-2. Understand table relationships and foreign keys
-3. Generate C# entity classes with proper EF Core annotations
-4. Create repository interfaces and implementations
-5. Generate migration scripts if needed
-
-## Entity Generation Rules
-1. Use proper C# naming conventions (PascalCase for classes/properties)
-2. Add [Key] attribute for primary keys
-3. Add [ForeignKey] and navigation properties for relationships
-4. Add [Required], [MaxLength], etc. as needed
-5. Use nullable reference types appropriately
-6. Add XML documentation comments
-
-## Example Entity
-```csharp
-using System.ComponentModel.DataAnnotations;
-using System.ComponentModel.DataAnnotations.Schema;
-
-namespace FleetManagement.Data.Entities;
-
-/// <summary>
-/// Represents a vehicle in the fleet management system.
-/// </summary>
-public class Vehicle
-{
-    [Key]
-    public int VehicleId { get; set; }
-
-    [Required]
-    [MaxLength(50)]
-    public string VehicleNumber { get; set; } = string.Empty;
-
-    [MaxLength(100)]
-    public string? Description { get; set; }
-
-    // Navigation property
-    public virtual ICollection<Trip> Trips { get; set; } = new List<Trip>();
-}
-```
-
-Be thorough and ensure all relationships are properly mapped.
-"""
 
 
 class DatabaseMigrationAgent(AgenticAgent):
@@ -95,7 +47,7 @@ class DatabaseMigrationAgent(AgenticAgent):
 
         super().__init__(
             name="DatabaseMigrationAgent",
-            system_prompt=DATABASE_SYSTEM_PROMPT,
+            system_prompt=load_prompt("database_migration/system_prompt"),
             config=config,
         )
 
@@ -219,18 +171,6 @@ class DatabaseMigrationAgent(AgenticAgent):
         """
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        prompt = f"""
-Generate Entity Framework Core entity classes for form '{self.form_name}'.
-
-Steps:
-1. Get the database schema
-2. Get the DB PRD for additional context
-3. For each table, create an entity class in backend/Entities/
-4. Include proper annotations, navigation properties, and documentation
-
-After generating entities, create:
-- DbContext class in backend/Data/
-- Repository interfaces and implementations in backend/Repositories/
-"""
+        prompt = load_prompt("database_migration/generate_entities", form_name=self.form_name)
 
         return await self.send_message(prompt)

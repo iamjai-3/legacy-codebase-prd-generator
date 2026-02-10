@@ -1,0 +1,16 @@
+Based on the UI analysis for "{form_name}":
+
+{screen_info}
+
+Identify:
+
+ENTRY POINTS:
+- How users navigate to this module
+- Starting screens or actions
+
+EXIT POINTS:
+- How users complete tasks
+- Navigation to other modules
+- Cancel/close actions
+
+Format as two sections: ENTRY POINTS and EXIT POINTS.

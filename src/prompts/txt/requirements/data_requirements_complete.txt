@@ -1,0 +1,183 @@
+Extract COMPLETE data model for "{form_name}" with ALL fields from DTO classes and map them to normalized schema.
+
+CRITICAL REQUIREMENTS:
+1. Extract ALL fields from every DTO class found in the code - do not skip any fields
+2. For each DTO field, create a mapping to the normalized schema column
+3. Document the transformation required (e.g., VARCHAR code → INTEGER ID)
+4. Include default values for new fields in normalized schema
+5. Verify completeness: if SubchaptersDTO has 9 fields, all 9 must be documented
+
+REQUIRED FIELDS FROM DTO CLASSES:
+{dto_code}
+
+NORMALIZED SCHEMA:
+{normalized_schema}
+
+MODEL/ENTITY CODE:
+{model_summary}
+
+For EACH entity, you MUST include:
+1. ALL fields from the DTO class (verify against class definition - count them!)
+2. Field mapping: DTO field → Normalized column → Data Type → Transformation Rule
+3. Primary key transformation (if applicable: VARCHAR composite → INTEGER ID)
+4. All relationships with cardinality
+5. All constraints and validations
+6. Default values for new fields not in legacy schema
+
+Generate data requirements in JSON format:
+[
+    {{
+        "entity_name": "Subchapters",
+        "description": "Subchapter entity with fleet-specific configuration",
+        "source_table": "SUBCHAPTERS",
+        "source_class": "SubchaptersDTO.java",
+        "fields": [
+            {{
+                "name": "fleet",
+                "java_type": "String",
+                "column": "fleet_code",
+                "type": "VARCHAR",
+                "normalized_column": "fleet_code",
+                "normalized_type": "VARCHAR",
+                "transformation": "Direct mapping, add FK constraint",
+                "constraints": ["FK to fleets"],
+                "validation": "Must exist in fleets table",
+                "default": "N/A",
+                "description": "Fleet code identifier"
+            }},
+            {{
+                "name": "chapter",
+                "java_type": "String",
+                "column": "CHAPTER",
+                "type": "VARCHAR2",
+                "normalized_column": "chapter_id",
+                "normalized_type": "INTEGER",
+                "transformation": "VARCHAR code → INTEGER ID via lookup",
+                "constraints": ["FK to chapters"],
+                "validation": "Must exist in chapters table",
+                "default": "N/A",
+                "description": "Chapter code (transformed to ID)"
+            }},
+            {{
+                "name": "subchapter",
+                "java_type": "String",
+                "column": "SUBCHAPTER",
+                "type": "VARCHAR2",
+                "normalized_column": "subchapter",
+                "normalized_type": "VARCHAR",
+                "transformation": "Direct mapping",
+                "constraints": [],
+                "validation": "1-2 characters",
+                "default": "N/A",
+                "description": "Subchapter identifier"
+            }},
+            {{
+                "name": "description",
+                "java_type": "String",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "description",
+                "normalized_type": "VARCHAR",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Subchapter description (new in normalized schema)"
+            }},
+            {{
+                "name": "alertLimitLandings",
+                "java_type": "BigInteger",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "alert_limit_landings",
+                "normalized_type": "INTEGER",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Alert limit in landings (new in normalized schema)"
+            }},
+            {{
+                "name": "alertLimitDays",
+                "java_type": "BigInteger",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "alert_limit_days",
+                "normalized_type": "INTEGER",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Alert limit in days (new in normalized schema)"
+            }},
+            {{
+                "name": "exclusionFlag",
+                "java_type": "String",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "exclusion_flag",
+                "normalized_type": "VARCHAR",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "Fleet exclusion flag (new in normalized schema)"
+            }},
+            {{
+                "name": "etops",
+                "java_type": "String",
+                "column": "N/A (new field)",
+                "type": "N/A",
+                "normalized_column": "etops",
+                "normalized_type": "VARCHAR",
+                "transformation": "New field in normalized schema",
+                "constraints": [],
+                "validation": "N/A",
+                "default": "NULL",
+                "description": "ETOPS indicator (new in normalized schema)"
+            }}
+        ],
+        "primary_key": ["subchapter_id"],
+        "primary_key_transformation": "Legacy: composite (FLEET, CHAPTER, SUBCHAPTER) → Normalized: INTEGER subchapter_id",
+        "foreign_keys": [
+            {{
+                "columns": ["fleet_code"],
+                "references_table": "fleets",
+                "references_columns": ["fleet_code"]
+            }},
+            {{
+                "columns": ["chapter_id"],
+                "references_table": "chapters",
+                "references_columns": ["chapter_id"]
+            }}
+        ],
+        "indexes": [],
+        "relationships": [
+            {{
+                "type": "MANY_TO_ONE",
+                "target_entity": "Fleets",
+                "target_table": "fleets",
+                "join_column": "fleet_code"
+            }},
+            {{
+                "type": "MANY_TO_ONE",
+                "target_entity": "Chapters",
+                "target_table": "chapters",
+                "join_column": "chapter_id"
+            }}
+        ],
+        "business_rules": ["Subchapters are fleet-specific", "Subchapter codes are 1-2 characters"],
+        "sample_queries": [
+            {{
+                "purpose": "Get subchapters for a fleet and chapter",
+                "sql": "SELECT * FROM subchapters WHERE fleet_code = ? AND chapter_id = ?"
+            }}
+        ]
+    }}
+]
+
+CRITICAL:
+- If a field exists in the DTO but is missing from your response, the PRD is incomplete
+- Count the fields in the DTO class and ensure ALL are included
+- For SubchaptersDTO, you MUST include all 9 fields: fleet, chapter, subchapter, description, alertLimitLandings, alertLimitDays, exclusionFlag, etops
+- Document the transformation for each field (direct mapping, lookup, new field, etc.)

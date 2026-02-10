@@ -10,6 +10,7 @@ from pathlib import Path
 
 from src.core.agentic.agentic_base import AgenticAgent, AgenticConfig
 from src.core.agentic.tool_registry import ToolParameter
+from src.prompts.loader import load_prompt
 from src.tools import (
     code_tools,
     database_knowledge_tool,
@@ -20,103 +21,6 @@ from src.tools import (
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-
-# System prompt for the migration orchestrator - concise and cost-aware
-MIGRATION_SYSTEM_PROMPT = """You are an expert software migration specialist.
-Goal: migrate legacy Java code to modern .NET backend and React frontend with 100% parity.
-
-CRITICAL: Knowledge-first. Before generating code, call `get_migration_playbook` and
-gather all required knowledge via tools. Follow the playbook order strictly.
-
-## EXECUTION RULES - READ CAREFULLY
-- You MUST keep calling tools until EVERY file is generated. Do NOT stop early.
-- Do NOT summarize progress. Do NOT explain what you will do next. Just DO it.
-- After writing a file, immediately proceed to write the next file.
-- You are NOT done until ALL backend layers AND ALL frontend layers have been written.
-- NEVER return a text response until every single file has been written via write_file.
-
-Rules:
-1. Only generate code files (no docs/README/manifest).
-2. Always follow conversion templates for output format.
-3. Preserve all business logic and behavior.
-4. Use Oracle→PostgreSQL type mappings for entities.
-"""
-
-# Detailed playbook (retrieved on demand to keep system prompt lean)
-MIGRATION_PLAYBOOK = """# Migration Playbook (Knowledge-First)
-
-## Capabilities
-You can:
-1. Retrieve full form knowledge (docs, dependencies, screenshots).
-2. Access DB schema and Oracle→PostgreSQL mappings.
-3. Load conversion templates for backend and frontend output formats.
-4. Search codebase and retrieve detailed code context.
-5. Write files in the output directory.
-
-## Mandatory Process (Execute In Order)
-
-### Step 1: Gather Knowledge (Required)
-1. `get_all_form_knowledge`
-2. `list_export_templates`
-3. `get_conversion_prompt("backend")`
-4. `get_conversion_prompt("frontend")`
-5. `get_oracle_to_postgres_mapping`
-
-### Step 2: Understand Database Schema
-1. `get_database_schema`
-2. `search_legacy_schema(table_name)`
-3. `get_highly_connected_tables`
-
-### Step 3: Extract Business Logic
-1. `search_codebase`
-2. `get_code_context`
-3. `get_business_logic`
-
-### Step 4: Generate Backend (.NET) First
-- Entities matching DB schema (use Oracle→PostgreSQL mappings)
-- Repositories with EF Core patterns
-- Services preserving ALL business logic
-- Controllers with RESTful endpoints
-
-### Step 5: Generate Frontend (React)
-- Use `list_screenshots` for UI references
-- React components matching legacy UI
-- Validation parity with legacy rules
-- API services calling backend
-
-### Step 6: Verify Output
-- Business logic preserved
-- Entity-to-table mappings correct
-- UI matches screenshots
-
-## Output Structure (all paths are RELATIVE to the working directory)
-When calling `write_file`, use paths exactly as shown below (do NOT prefix with "output/" or any parent):
-```
-backend/
-├── {ProjectName}.Data/Entities/
-├── {ProjectName}.Data/Repositories/
-├── {ProjectName}.Business/Services/
-├── {ProjectName}.Business/DTOs/
-└── {ProjectName}.API/Controllers/
-frontend/
-├── components/
-├── pages/
-├── services/
-└── types/
-```
-Example: write_file(filepath="backend/LE11.Data/Entities/SomeEntity.cs", content="...")
-
-## Critical Rules
-1. Only generate code files.
-2. Gather knowledge before code generation.
-3. Follow output templates exactly.
-4. 100% parity with legacy system behavior.
-5. Use Oracle→PostgreSQL mappings for entities.
-6. Inline code comments only.
-7. **DO NOT STOP** until ALL backend AND frontend files are written.
-8. Do NOT return summaries or explanations between steps — just keep writing files.
-"""
 
 
 class MigrationOrchestrator(AgenticAgent):
@@ -151,7 +55,7 @@ class MigrationOrchestrator(AgenticAgent):
 
         super().__init__(
             name="MigrationOrchestrator",
-            system_prompt=MIGRATION_SYSTEM_PROMPT,
+            system_prompt=load_prompt("migration/system_prompt"),
             config=config,
         )
 
@@ -360,7 +264,7 @@ class MigrationOrchestrator(AgenticAgent):
             name="get_migration_playbook",
             description="Get the detailed migration playbook (knowledge-first steps and rules).",
             parameters=[],
-            function=lambda **kwargs: MIGRATION_PLAYBOOK,
+            function=lambda **kwargs: load_prompt("migration/playbook"),
         )
 
         self.tool_registry.register(
@@ -572,55 +476,7 @@ class MigrationOrchestrator(AgenticAgent):
         if prompt:
             migration_prompt = prompt
         else:
-            migration_prompt = f"""
-# Migration Task: Form '{self.form_name}'
-
-## STEP 1: GATHER ALL KNOWLEDGE FIRST (MANDATORY)
-
-Execute these tools in order before generating ANY code:
-
-1. `get_all_form_knowledge` - Retrieve complete form knowledge
-2. `list_export_templates` - See available BE/FE templates
-3. `get_conversion_prompt("backend")` - Get .NET output format
-4. `get_oracle_to_postgres_mapping` - Get data type mappings
-
-## STEP 2: GENERATE BACKEND CODE
-
-Using the backend conversion template format, write files with RELATIVE paths:
-- `backend/{self.form_name}.Data/Entities/` - EF Core entities matching DB schema
-- `backend/{self.form_name}.Data/Repositories/` - Data access layer
-- `backend/{self.form_name}.Business/Services/` - Business logic
-- `backend/{self.form_name}.Business/DTOs/` - Data transfer objects
-- `backend/{self.form_name}.API/Controllers/` - REST endpoints
-
-## STEP 3: GENERATE FRONTEND CODE
-
-Using the frontend conversion template format, write files with RELATIVE paths:
-- `frontend/components/` - React components matching legacy UI
-- `frontend/pages/` - Pages for each form screen
-- `frontend/services/` - API services to call backend
-- `frontend/types/` - TypeScript types
-
-## CRITICAL - ONLY CODE FILES:
-- Generate ONLY .cs, .tsx, .ts, .json, .csproj files
-- NO documentation files (no .md, README, MANIFEST, API docs)
-- NO swagger/OpenAPI files
-- Put all documentation as inline code comments
-
-## REQUIREMENTS:
-- 100% parity with legacy business logic
-- Use Oracle→PostgreSQL type mappings for entities
-- Follow exact template output structure
-- Inline comments only (no separate doc files)
-
-## IMPORTANT: DO NOT STOP EARLY
-- You MUST generate ALL backend files (Entities, Repositories, Services, DTOs, Controllers)
-  AND ALL frontend files (components, pages, services, types) before finishing.
-- Do NOT return text explanations between files. Just keep calling write_file.
-- After writing each file, immediately write the next one.
-
-START by calling `get_all_form_knowledge` to gather knowledge.
-"""
+            migration_prompt = load_prompt("migration/migration_task", form_name=self.form_name)
 
         # --- Initial run ---
         result = await self.send_message(migration_prompt)
@@ -638,13 +494,7 @@ START by calling `get_all_form_knowledge` to gather knowledge.
                 missing,
             )
 
-            continuation_prompt = (
-                f"You stopped before the migration was complete. "
-                f"Missing output: {missing}\n\n"
-                f"Continue generating the remaining files NOW. "
-                f"Do NOT repeat files already written. "
-                f"Do NOT explain — just call write_file for every remaining file."
-            )
+            continuation_prompt = load_prompt("migration/continuation", missing=missing)
             result = await self.send_message(continuation_prompt)
 
         return result

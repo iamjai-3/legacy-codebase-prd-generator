@@ -1,0 +1,48 @@
+Extract ONLY integrations that are EXPLICITLY present in the "{form_name}" source code.
+
+CRITICAL RULES:
+1. ONLY document integrations that appear in the provided code (HTTP clients, API calls, database connections, message queues, COBOL calls)
+2. DO NOT invent integrations like "Payment Gateway", "CRM", "Email Service" unless they appear in the code
+3. For legacy Java Swing applications, look for:
+   - COBOL integration via csBlock, paras.send(), etc.
+   - Oracle/database calls via JDBC, stored procedures
+   - File I/O operations
+   - Internal service calls
+4. Use EXACT class names, method names, and endpoints from the code
+5. If no external integrations are found, return an empty array []
+
+INTEGRATION CODE:
+{integration_code}
+
+CONTEXT:
+{context}
+
+Generate integration specifications in JSON format (ONLY for integrations found in the code):
+[
+    {{
+        "integration_id": "INT-001",
+        "name": "ACTUAL_INTEGRATION_NAME_FROM_CODE",
+        "type": "REST_API|SOAP|DATABASE|MESSAGE_QUEUE|FILE|LEGACY_COBOL",
+        "direction": "INBOUND|OUTBOUND|BIDIRECTIONAL",
+        "external_system": "ACTUAL_SYSTEM_FROM_CODE",
+        "purpose": "Purpose inferred from code context",
+        "specification": {{
+            "protocol": "ACTUAL_PROTOCOL",
+            "endpoint": "ACTUAL_ENDPOINT_OR_METHOD",
+            "authentication": {{"type": "AS_IN_CODE", "details": "FROM_CODE"}},
+            "request_format": "AS_IN_CODE",
+            "response_format": "AS_IN_CODE"
+        }},
+        "data_mapping": [
+            {{"source_field": "ACTUAL_FIELD", "target_field": "ACTUAL_FIELD", "transformation": "FROM_CODE"}}
+        ],
+        "error_handling": {{
+            "retry_policy": "AS_IN_CODE_OR_N/A",
+            "fallback": "AS_IN_CODE_OR_N/A",
+            "alerts": "AS_IN_CODE_OR_N/A"
+        }},
+        "frequency": "INFERRED_FROM_CODE"
+    }}
+]
+
+If no integrations are found in the code, return: []

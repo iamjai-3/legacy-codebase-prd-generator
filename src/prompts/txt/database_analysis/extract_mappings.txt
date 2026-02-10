@@ -1,0 +1,52 @@
+Analyze the following database documentation for the "{form_name}" form/module and extract table mappings between legacy (Oases) and target (Lumina) schemas.
+
+Focus ONLY on tables used by {form_name}. Extract mappings only for tables mentioned in this documentation.
+
+DATABASE DOCUMENTATION:
+{content_preview}
+
+Extract and return a JSON object with the following structure:
+{{
+  "mappings": [
+    {{
+      "legacy_table": "oaseslive.table_name",
+      "target_table": "lumina.table_name",
+      "mapping_type": "direct" | "split" | "merged" | "transformed",
+      "field_mappings": [
+        {{
+          "legacy_field": "legacy_column",
+          "target_field": "target_column",
+          "transformation": "description of transformation" or null
+        }}
+      ],
+      "notes": "Additional mapping notes"
+    }}
+  ],
+  "relationships": [
+    {{
+      "from_table": "schema.table1",
+      "to_table": "schema.table2",
+      "type": "one_to_many" | "many_to_one" | "many_to_many",
+      "foreign_key": "column_name",
+      "description": "Relationship description"
+    }}
+  ],
+  "schema_changes": [
+    {{
+      "change_type": "added" | "removed" | "modified" | "renamed",
+      "legacy_table": "legacy.table",
+      "target_table": "target.table",
+      "description": "Description of change"
+    }}
+  ]
+}}
+
+Focus on:
+- Direct table name mappings
+- Field-level mappings with transformations
+- Relationship preservation or changes
+- Schema evolution patterns
+- New tables in target schema
+- Deprecated tables in legacy schema
+
+Return ONLY valid JSON, no markdown formatting or explanations.

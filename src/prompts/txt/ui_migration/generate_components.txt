@@ -1,0 +1,15 @@
+Generate React TypeScript components for form '{form_name}'.
+
+Steps:
+1. List available screenshots
+2. Get form documentation to understand field requirements
+3. Search for validation rules in the legacy code
+4. Generate React components in frontend/components/
+5. Create type definitions in frontend/types/
+6. Create API service layer in frontend/services/
+
+Make sure to:
+- Match the legacy UI layout
+- Implement all validation rules
+- Use proper TypeScript types
+- Include CSS styling

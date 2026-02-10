@@ -1,0 +1,22 @@
+Create a detailed migration strategy for "{form_name}".
+
+COMPLEXITY ASSESSMENT: {complexity}
+
+TECHNICAL DETAILS:
+{tech_details}
+
+Include these sections:
+1. **Complexity Analysis**: Factors contributing to complexity level
+2. **Recommended Approach**: Big bang vs. phased vs. strangler pattern
+3. **Migration Phases**:
+   - Phase 1: What to migrate first and why
+   - Phase 2: Second wave with dependencies on Phase 1
+   - Phase 3+: Remaining components
+4. **Data Migration Strategy**: How to migrate data with minimal downtime
+5. **Integration Cutover**: How to switch integrations to new system
+6. **Testing Strategy**: Unit, integration, E2E, UAT approach
+7. **Rollback Plan**: How to revert if issues arise
+8. **Success Criteria**: How to measure successful migration
+9. **Risk Mitigation**: Specific risks and mitigation strategies
+
+Be specific to this module's characteristics, not generic advice.

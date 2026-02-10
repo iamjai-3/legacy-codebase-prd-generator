@@ -1,0 +1,72 @@
+# Migration Playbook (Knowledge-First)
+
+## Capabilities
+You can:
+1. Retrieve full form knowledge (docs, dependencies, screenshots).
+2. Access DB schema and Oracle→PostgreSQL mappings.
+3. Load conversion templates for backend and frontend output formats.
+4. Search codebase and retrieve detailed code context.
+5. Write files in the output directory.
+
+## Mandatory Process (Execute In Order)
+
+### Step 1: Gather Knowledge (Required)
+1. `get_all_form_knowledge`
+2. `list_export_templates`
+3. `get_conversion_prompt("backend")`
+4. `get_conversion_prompt("frontend")`
+5. `get_oracle_to_postgres_mapping`
+
+### Step 2: Understand Database Schema
+1. `get_database_schema`
+2. `search_legacy_schema(table_name)`
+3. `get_highly_connected_tables`
+
+### Step 3: Extract Business Logic
+1. `search_codebase`
+2. `get_code_context`
+3. `get_business_logic`
+
+### Step 4: Generate Backend (.NET) First
+- Entities matching DB schema (use Oracle→PostgreSQL mappings)
+- Repositories with EF Core patterns
+- Services preserving ALL business logic
+- Controllers with RESTful endpoints
+
+### Step 5: Generate Frontend (React)
+- Use `list_screenshots` for UI references
+- React components matching legacy UI
+- Validation parity with legacy rules
+- API services calling backend
+
+### Step 6: Verify Output
+- Business logic preserved
+- Entity-to-table mappings correct
+- UI matches screenshots
+
+## Output Structure (all paths are RELATIVE to the working directory)
+When calling `write_file`, use paths exactly as shown below (do NOT prefix with "output/" or any parent):
+```
+backend/
+├── {{ProjectName}}.Data/Entities/
+├── {{ProjectName}}.Data/Repositories/
+├── {{ProjectName}}.Business/Services/
+├── {{ProjectName}}.Business/DTOs/
+└── {{ProjectName}}.API/Controllers/
+frontend/
+├── components/
+├── pages/
+├── services/
+└── types/
+```
+Example: write_file(filepath="backend/LE11.Data/Entities/SomeEntity.cs", content="...")
+
+## Critical Rules
+1. Only generate code files.
+2. Gather knowledge before code generation.
+3. Follow output templates exactly.
+4. 100% parity with legacy system behavior.
+5. Use Oracle→PostgreSQL mappings for entities.
+6. Inline code comments only.
+7. **DO NOT STOP** until ALL backend AND frontend files are written.
+8. Do NOT return summaries or explanations between steps — just keep writing files.

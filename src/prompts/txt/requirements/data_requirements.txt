@@ -1,0 +1,47 @@
+Extract ONLY data entities that are EXPLICITLY present in the "{form_name}" source code and documentation.
+
+CRITICAL RULES:
+1. ONLY extract entities/tables that appear in the provided code or documentation
+2. DO NOT invent generic entities (like Customer, Order, Transaction, User) unless they appear in the code
+3. Use EXACT class names, table names, and column names from the source
+4. For legacy Java Swing applications, focus on:
+   - UI component models (TableModels, ComboBox data)
+   - Database tables referenced in the code (FLEET_CHAPTER, CHAPTER_ALERT_RATES, etc.)
+   - Form field data structures
+5. If no entities are documented, return an empty array []
+
+MODEL/ENTITY CODE:
+{model_summary}
+
+DATABASE CONTEXT FROM KNOWLEDGE BASE:
+{database_context}
+
+Generate data requirements in JSON format (ONLY for entities found in the code):
+[
+    {{
+        "entity_name": "ACTUAL_CLASS_OR_TABLE_NAME",
+        "description": "Purpose inferred from code context",
+        "source_table": "ACTUAL_TABLE_NAME_FROM_CODE_OR_N/A",
+        "source_class": "ACTUAL_CLASS.java",
+        "fields": [
+            {{
+                "name": "ACTUAL_FIELD_NAME",
+                "column": "ACTUAL_COLUMN_NAME_OR_N/A",
+                "type": "ACTUAL_TYPE_FROM_CODE",
+                "java_type": "ACTUAL_JAVA_TYPE",
+                "constraints": ["ACTUAL_CONSTRAINTS"],
+                "validation": "FROM_CODE_OR_N/A",
+                "default": "FROM_CODE_OR_N/A",
+                "description": "Inferred from context"
+            }}
+        ],
+        "primary_key": ["ACTUAL_PK_COLUMNS"],
+        "foreign_keys": [],
+        "indexes": [],
+        "relationships": [],
+        "business_rules": ["RULES_FROM_CODE"],
+        "sample_queries": []
+    }}
+]
+
+If no data entities are found in the code, return: []

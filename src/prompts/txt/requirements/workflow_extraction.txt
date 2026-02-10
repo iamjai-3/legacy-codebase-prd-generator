@@ -1,0 +1,32 @@
+Extract workflow and state transition logic from "{form_name}" code.
+
+WORKFLOW CODE:
+{workflow_code}
+
+Generate workflow specifications in JSON format:
+[
+    {{
+        "workflow_id": "WF-001",
+        "name": "Workflow name",
+        "description": "Business purpose",
+        "entity": "Entity this workflow applies to",
+        "states": [
+            {{"id": "STATE_1", "name": "Display name", "description": "What this state means"}}
+        ],
+        "transitions": [
+            {{
+                "from": "STATE_1",
+                "to": "STATE_2",
+                "trigger": "What causes this transition",
+                "guard_conditions": ["Conditions that must be true"],
+                "actions": ["Actions performed during transition"],
+                "permissions": ["Roles that can perform this"]
+            }}
+        ],
+        "initial_state": "STATE_1",
+        "terminal_states": ["STATE_N"],
+        "business_rules": ["Rules governing this workflow"]
+    }}
+]
+
+Include all state machines and approval workflows.

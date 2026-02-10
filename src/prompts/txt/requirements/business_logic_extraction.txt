@@ -1,0 +1,44 @@
+Analyze the following code for "{form_name}" and extract ALL business logic for migration.
+
+CODE TO ANALYZE:
+{code_content}
+
+EXTRACT EVERY:
+1. Validation rules (if conditions that show errors/warnings)
+2. Save/Update operations
+3. Field dependencies (when field A changes, update field B)
+4. Calculations and formulas
+5. State transitions (enabled/disabled, visible/invisible)
+6. Database operations (insert, update, delete)
+
+Return as JSON array:
+[
+    {{
+        "logic_id": "BL-001",
+        "name": "Alert Limit Validation",
+        "type": "validation",
+        "description": "Cannot have both alert limits as zero",
+        "trigger": "User changes alertLimitDays field",
+        "inputs": [
+            {{"name": "alertLimitDays", "type": "int", "source": "UI field"}},
+            {{"name": "alertLimitLandings", "type": "int", "source": "UI field"}}
+        ],
+        "steps": [
+            "1. Check if alertLimitDays == 0",
+            "2. Check if alertLimitLandings == 0",
+            "3. If both zero, show error message",
+            "4. Set removalAlertLimit as mandatory"
+        ],
+        "outputs": [
+            {{"name": "errorMessage", "type": "String", "destination": "csInfoPanel"}}
+        ],
+        "conditions": [
+            {{"condition": "alertLimitDays.equals(\"0\") && removalAlertLimit.equals(\"0\")", "true_action": "Show warning", "false_action": "Continue"}}
+        ]
+    }}
+]
+
+IMPORTANT:
+- Extract from ACTUAL code, not assumptions
+- Use EXACT method names and field names from the code
+- If no logic found, return empty array []

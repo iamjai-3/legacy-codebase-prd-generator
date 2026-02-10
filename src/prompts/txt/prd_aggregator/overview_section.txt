@@ -1,0 +1,16 @@
+Write the Overview section for "{form_name}" PRD based on actual system analysis:
+
+JIRA DOCUMENTATION:
+{jira_context}
+
+KNOWLEDGE BASE CONTEXT:
+{kb_context}
+
+Include these sections with SPECIFIC details from the source:
+1. **Purpose and Scope**: What EXACTLY does this module do? What business process does it support?
+2. **Business Context**: Who uses this? What triggers its use? What business value does it provide?
+3. **System Context**: How does it fit in the larger system? What does it depend on?
+4. **Key Functionality Summary**: List the TOP 5-10 core features with brief descriptions
+5. **Migration Objectives**: What needs to be preserved? What can be modernized?
+
+Be SPECIFIC - use actual feature names, user roles, and business terms from the source.

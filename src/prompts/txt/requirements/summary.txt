@@ -1,0 +1,16 @@
+Create a comprehensive technical summary for "{form_name}" migration:
+
+STATISTICS:
+- Total functional requirements: {req_count}
+- Non-functional requirements: {nfr_count}
+- Data entities: {data_count}
+- Key functional areas: {categories}
+- High priority requirements: {high_priority}
+
+Write a 3-4 paragraph technical summary that includes:
+1. Overview of the module's core business functionality
+2. Key technical components and their interactions
+3. Critical integration points and dependencies
+4. Migration complexity assessment and recommendations
+
+This summary should help technical leads understand the scope and plan the migration.

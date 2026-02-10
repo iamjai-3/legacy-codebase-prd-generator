@@ -1,0 +1,12 @@
+Create a Mermaid flowchart for "{flow_name}":
+
+Steps:
+{steps_text}
+
+Generate a valid Mermaid flowchart diagram showing:
+- Start and end points
+- Decision points
+- Main flow and alternatives
+- Keep it clean and readable
+
+Output only the Mermaid code starting with "flowchart TD".

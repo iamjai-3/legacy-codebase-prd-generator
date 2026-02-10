@@ -1,0 +1,3 @@
+You stopped before the migration was complete. Missing output: {missing}
+
+Continue generating the remaining files NOW. Do NOT repeat files already written. Do NOT explain — just call write_file for every remaining file.
