@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
-from src.prompts.database_analysis import DatabaseAnalysisPrompts
+from src.prompts.loader import load_prompt
 from src.utils.logging_config import ExecutionTimer, get_logger
 from src.utils.serialization import extract_json_object
 
@@ -40,7 +40,7 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
 
     def get_system_prompt(self, context: AgentContext) -> str:
         """Get the system prompt for database analysis."""
-        return DatabaseAnalysisPrompts.system_prompt(context.form_name)
+        return load_prompt("database_analysis/system_prompt", form_name=context.form_name)
 
     async def analyze(
         self,
@@ -187,7 +187,12 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
 
     async def _analyze_tables(self, context: AgentContext, db_content: str) -> dict[str, Any]:
         """Extract form-specific table structures from database documentation."""
-        prompt = DatabaseAnalysisPrompts.extract_tables_prompt(db_content, context.form_name)
+        content_preview = db_content[:50000] if len(db_content) > 50000 else db_content
+        prompt = load_prompt(
+            "database_analysis/extract_tables",
+            form_name=context.form_name,
+            content_preview=content_preview,
+        )
 
         response = await self.invoke_llm(context, prompt)
 
@@ -209,7 +214,12 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
 
     async def _analyze_mappings(self, context: AgentContext, db_content: str) -> dict[str, Any]:
         """Extract form-specific table mappings between legacy and target schemas."""
-        prompt = DatabaseAnalysisPrompts.extract_mappings_prompt(db_content, context.form_name)
+        content_preview = db_content[:50000] if len(db_content) > 50000 else db_content
+        prompt = load_prompt(
+            "database_analysis/extract_mappings",
+            form_name=context.form_name,
+            content_preview=content_preview,
+        )
 
         response = await self.invoke_llm(context, prompt)
 
@@ -236,8 +246,13 @@ class DatabaseAnalysisAgent(BaseAgent[DatabaseAnalysisResult]):
         mapping_analysis: dict[str, Any],
     ) -> str:
         """Generate form-specific schema summary."""
-        prompt = DatabaseAnalysisPrompts.generate_summary_prompt(
-            db_content, table_analysis, mapping_analysis, context.form_name
+        content_preview = db_content[:30000] if len(db_content) > 30000 else db_content
+        prompt = load_prompt(
+            "database_analysis/generate_summary",
+            form_name=context.form_name,
+            content_preview=content_preview,
+            table_analysis=table_analysis,
+            mapping_analysis=mapping_analysis,
         )
 
         response = await self.invoke_llm(context, prompt)

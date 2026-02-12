@@ -10,7 +10,7 @@ from typing import Any
 
 from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
 from src.extractors.minio_extractor import MinioExtractor, Screenshot
-from src.prompts.screenshot_analysis import ScreenshotAnalysisPrompts
+from src.prompts.loader import load_prompt
 from src.utils.logging_config import ExecutionTimer
 
 
@@ -80,7 +80,7 @@ class ScreenshotAnalysisAgent(BaseAgent[ScreenshotAnalysisResult]):
 
     def get_system_prompt(self, context: AgentContext) -> str:
         """Get the system prompt for screenshot analysis."""
-        return ScreenshotAnalysisPrompts.system_prompt(context.form_name)
+        return load_prompt("screenshot_analysis/system_prompt", form_name=context.form_name)
 
     async def analyze(
         self,

@@ -476,7 +476,7 @@ class MigrationOrchestrator(AgenticAgent):
         if prompt:
             migration_prompt = prompt
         else:
-            migration_prompt = load_prompt("migration/migration_task", form_name=self.form_name)
+            migration_prompt = load_prompt("migration/playbook")
 
         # --- Initial run ---
         result = await self.send_message(migration_prompt)

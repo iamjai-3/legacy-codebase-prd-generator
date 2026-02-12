@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
-from src.prompts.user_flow import UserFlowPrompts
+from src.prompts.loader import load_prompt
 from src.utils.logging_config import ExecutionTimer
 from src.utils.serialization import extract_json_array
 
@@ -67,7 +67,7 @@ class UserFlowAgent(BaseAgent[UserFlowResult]):
 
     def get_system_prompt(self, context: AgentContext) -> str:
         """Get the system prompt for user flow analysis."""
-        return UserFlowPrompts.system_prompt(context.form_name)
+        return load_prompt("user_flow/system_prompt", form_name=context.form_name)
 
     async def analyze(
         self,

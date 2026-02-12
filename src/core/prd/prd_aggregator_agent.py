@@ -18,7 +18,7 @@ from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
 from src.core.prd.requirements_generator_agent import RequirementsGeneratorResult
 from src.core.prd.screenshot_analysis_agent import ScreenshotAnalysisResult
 from src.core.prd.user_flow_agent import UserFlowResult
-from src.prompts.prd_aggregator import PRDAggregatorPrompts
+from src.prompts.loader import load_prompt
 from src.utils.logging_config import ExecutionTimer
 
 # Constants
@@ -77,7 +77,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
 
     def get_system_prompt(self, context: AgentContext) -> str:
         """Get the system prompt for PRD aggregation."""
-        return PRDAggregatorPrompts.system_prompt(context.form_name)
+        return load_prompt("prd_aggregator/system_prompt", form_name=context.form_name)
 
     async def analyze(
         self,
@@ -462,7 +462,12 @@ Based on Jira analysis:
             max_contexts=5,
         )
 
-        prompt = PRDAggregatorPrompts.overview_section(context.form_name, jira_context, kb_context)
+        prompt = load_prompt(
+            "prd_aggregator/overview_section",
+            form_name=context.form_name,
+            jira_context=jira_context,
+            kb_context=kb_context,
+        )
 
         content = await self.invoke_llm(context, prompt)
 
@@ -1686,8 +1691,11 @@ This section provides complete field mappings from legacy DTO classes to normali
             kb_contexts.get("existing_prd", []), max_contexts=3
         )
 
-        prompt = PRDAggregatorPrompts.migration_strategy_section(
-            context.form_name, complexity, f"{tech_details}\n\nEXISTING PRD:\n{kb_context}"
+        prompt = load_prompt(
+            "prd_aggregator/migration_strategy_section",
+            form_name=context.form_name,
+            complexity=complexity,
+            tech_details=f"{tech_details}\n\nEXISTING PRD:\n{kb_context}",
         )
 
         content = await self.invoke_llm(context, prompt)
@@ -1719,14 +1727,15 @@ This section provides complete field mappings from legacy DTO classes to normali
             max_contexts=10,
         )
 
-        prompt = PRDAggregatorPrompts.executive_summary(
-            context.form_name,
-            req_count,
-            api_count,
-            entity_count,
-            integration_count,
-            complexity,
-            kb_context,
+        prompt = load_prompt(
+            "prd_aggregator/executive_summary",
+            form_name=context.form_name,
+            req_count=req_count,
+            api_count=api_count,
+            entity_count=entity_count,
+            integration_count=integration_count,
+            complexity=complexity,
+            kb_context=kb_context,
         )
 
         return await self.invoke_llm(context, prompt)

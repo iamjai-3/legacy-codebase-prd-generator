@@ -11,7 +11,7 @@ from typing import Any
 
 from src.core.prd.base_agent import AgentContext, AgentResult, BaseAgent
 from src.extractors.code_extractor import CodeFile
-from src.prompts.requirements import RequirementsPrompts
+from src.prompts.loader import load_prompt
 from src.utils.business_logic_extractor import extract_business_logic_summary
 from src.utils.logging_config import ExecutionTimer
 from src.utils.serialization import extract_json_array
@@ -223,7 +223,7 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
 
     def get_system_prompt(self, context: AgentContext) -> str:
         """Get the system prompt for requirements generation."""
-        return RequirementsPrompts.system_prompt(context.form_name)
+        return load_prompt("requirements/system_prompt", form_name=context.form_name)
 
     async def analyze(
         self,
@@ -465,7 +465,11 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         # Combine all sources for LLM analysis
         combined_context = f"{logic_code}\n\n## STRUCTURED EXTRACTION:{structured_logic}\n\nKNOWLEDGE BASE:\n{kb_context}"
 
-        prompt = RequirementsPrompts.business_logic_extraction(context.form_name, combined_context)
+        prompt = load_prompt(
+            "requirements/business_logic_extraction",
+            form_name=context.form_name,
+            code_content=combined_context,
+        )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
 
@@ -497,8 +501,10 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             kb_contexts.get("api_endpoints", []), max_contexts=5
         )
 
-        prompt = RequirementsPrompts.api_specification(
-            context.form_name, f"{service_code}\n\nKNOWLEDGE BASE:\n{kb_context}"
+        prompt = load_prompt(
+            "requirements/api_specification",
+            form_name=context.form_name,
+            service_code=f"{service_code}\n\nKNOWLEDGE BASE:\n{kb_context}",
         )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -539,10 +545,11 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             max_contexts=8,
         )
 
-        prompt = RequirementsPrompts.functional_requirements(
-            context.form_name,
-            f"{code_summary}\n\nBUSINESS LOGIC:\n{logic_summary}\n\nAPI ENDPOINTS:\n{api_summary}",
-            context_summary,
+        prompt = load_prompt(
+            "requirements/functional_requirements",
+            form_name=context.form_name,
+            code_summary=f"{code_summary}\n\nBUSINESS LOGIC:\n{logic_summary}\n\nAPI ENDPOINTS:\n{api_summary}",
+            context_summary=context_summary,
         )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -592,13 +599,20 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
 
         # Use enhanced prompt if we have DTO code and normalized schema
         if dto_code and normalized_schema:
-            prompt = RequirementsPrompts.data_requirements_complete(
-                context.form_name, dto_code, normalized_schema, model_summary
+            prompt = load_prompt(
+                "requirements/data_requirements_complete",
+                form_name=context.form_name,
+                dto_code=dto_code,
+                normalized_schema=normalized_schema,
+                model_summary=model_summary,
             )
         else:
             # Fallback to standard prompt
-            prompt = RequirementsPrompts.data_requirements(
-                context.form_name, model_summary, db_context
+            prompt = load_prompt(
+                "requirements/data_requirements",
+                form_name=context.form_name,
+                model_summary=model_summary,
+                database_context=db_context,
             )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -662,8 +676,11 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             kb_contexts.get("validation", []), max_contexts=5
         )
 
-        prompt = RequirementsPrompts.validation_rules(
-            context.form_name, validation_code, context_text
+        prompt = load_prompt(
+            "requirements/validation_rules",
+            form_name=context.form_name,
+            validation_code=validation_code,
+            context_text=context_text,
         )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -693,8 +710,10 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
         workflow_code = self._extract_workflow_code(code_files)
         kb_context = self.format_context_for_prompt(kb_contexts.get("workflow", []), max_contexts=5)
 
-        prompt = RequirementsPrompts.workflow_extraction(
-            context.form_name, f"{workflow_code}\n\nKNOWLEDGE BASE:\n{kb_context}"
+        prompt = load_prompt(
+            "requirements/workflow_extraction",
+            form_name=context.form_name,
+            workflow_code=f"{workflow_code}\n\nKNOWLEDGE BASE:\n{kb_context}",
         )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -726,8 +745,11 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             kb_contexts.get("integration", []), max_contexts=5
         )
 
-        prompt = RequirementsPrompts.integration_requirements(
-            context.form_name, integration_code, kb_context
+        prompt = load_prompt(
+            "requirements/integration_requirements",
+            form_name=context.form_name,
+            integration_code=integration_code,
+            context=kb_context,
         )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -830,7 +852,11 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
 
         if kb_context.strip() and "SourceTables" in kb_context:
             # Only use LLM if we have actual PRD documentation with table info
-            prompt = RequirementsPrompts.source_tables_extraction(context.form_name, kb_context)
+            prompt = load_prompt(
+                "requirements/source_tables_extraction",
+                form_name=context.form_name,
+                kb_context=kb_context,
+            )
             data = extract_json_array(await self.invoke_llm(context, prompt))
 
             # Add tables from PRD docs that weren't found in SQL files
@@ -954,7 +980,12 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             kb_contexts.get("database_mapping", []) + kb_contexts.get("database", []),
             max_contexts=8,
         )
-        prompt = RequirementsPrompts.database_mappings(context.form_name, model_code, kb_context)
+        prompt = load_prompt(
+            "requirements/database_mappings",
+            form_name=context.form_name,
+            code_context=model_code,
+            kb_context=kb_context,
+        )
         data = extract_json_array(await self.invoke_llm(context, prompt))
         return [
             DatabaseMapping(
@@ -1013,8 +1044,10 @@ class RequirementsGeneratorAgent(BaseAgent[RequirementsGeneratorResult]):
             kb_contexts.get("existing_prd", []), max_contexts=3
         )
 
-        prompt = RequirementsPrompts.non_functional_requirements(
-            context.form_name, f"{code_context}\n\nEXISTING PRD:\n{kb_context}"
+        prompt = load_prompt(
+            "requirements/non_functional_requirements",
+            form_name=context.form_name,
+            code_context=f"{code_context}\n\nEXISTING PRD:\n{kb_context}",
         )
 
         data = extract_json_array(await self.invoke_llm(context, prompt))
@@ -1190,13 +1223,14 @@ Be specific to this module, not generic."""
         categories = ", ".join({r.category for r in functional_reqs}) or "N/A"
         high_priority = [r.title for r in functional_reqs if r.priority == "P0"][:5]
 
-        prompt = RequirementsPrompts.summary(
-            context.form_name,
-            categories,
-            ", ".join(high_priority) or "None identified",
-            len(functional_reqs),
-            len(non_functional_reqs),
-            len(data_reqs),
+        prompt = load_prompt(
+            "requirements/summary",
+            form_name=context.form_name,
+            categories=categories,
+            high_priority=", ".join(high_priority) or "None identified",
+            req_count=len(functional_reqs),
+            nfr_count=len(non_functional_reqs),
+            data_count=len(data_reqs),
         )
 
         return await self.invoke_llm(context, prompt)
