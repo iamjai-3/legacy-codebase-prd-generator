@@ -83,7 +83,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         self,
         context: AgentContext,
         screenshot_analysis: ScreenshotAnalysisResult | None = None,
-        atlassian_analysis: Any | None = None,  # Deprecated, always None
         requirements_analysis: RequirementsGeneratorResult | None = None,
         user_flow_analysis: UserFlowResult | None = None,
         database_analysis: dict[str, Any] | None = None,
@@ -95,7 +94,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         Args:
             context: Agent execution context
             screenshot_analysis: Results from screenshot analysis
-            atlassian_analysis: Results from Atlassian integration
             requirements_analysis: Results from requirements generation
             user_flow_analysis: Results from user flow analysis
 
@@ -108,7 +106,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             "Starting migration-focused PRD aggregation",
             form_name=context.form_name,
             has_screenshots=screenshot_analysis is not None,
-            has_jira=atlassian_analysis is not None,
             has_requirements=requirements_analysis is not None,
         )
 
@@ -120,7 +117,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             sections = await self._build_all_sections(
                 context,
                 screenshot_analysis,
-                atlassian_analysis,
                 requirements_analysis,
                 user_flow_analysis,
                 kb_contexts,
@@ -143,7 +139,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 executive_summary,
                 appendices,
                 screenshot_analysis,
-                atlassian_analysis,
                 requirements_analysis,
             )
 
@@ -181,26 +176,48 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
             return self.create_error_result(e, timer)
 
     def _retrieve_kb_context(self, form_name: str) -> dict[str, list[str]]:
-        """Retrieve context from knowledge base for PRD enhancement."""
-        contexts = {}
+        """Retrieve context from knowledge base for PRD enhancement.
 
-        queries = {
-            "overview": "module purpose functionality description features overview",
-            "business_logic": "business logic rules calculation workflow process",
-            "api": "API endpoint service controller method request response",
-            "data": "database table entity field column relationship schema",
-            "validation": "validation rule required constraint check error",
-            "integration": "integration external system API connection service",
-            "existing_prd": "PRD requirements specification documentation",
+        Uses 3 consolidated queries instead of 7 to reduce embedding API calls,
+        then maps results back to the expected dict keys.
+        """
+        contexts: dict[str, list[str]] = {
+            "overview": [],
+            "business_logic": [],
+            "api": [],
+            "data": [],
+            "validation": [],
+            "integration": [],
+            "existing_prd": [],
         }
 
-        for key, query in queries.items():
+        # Consolidated queries: 3 instead of 7
+        consolidated = {
+            "overview_prd": (
+                "module overview features requirements specification documentation",
+                ["overview", "existing_prd"],
+            ),
+            "logic_api_validation": (
+                "business logic rules API endpoint service validation calculation",
+                ["business_logic", "api", "validation"],
+            ),
+            "data_integration": (
+                "database table entity field schema integration external system",
+                ["data", "integration"],
+            ),
+        }
+
+        for group_key, (query, target_keys) in consolidated.items():
             try:
-                results = self.retrieve_context(form_name, query, limit=5)
-                contexts[key] = results
+                results = self.retrieve_context(form_name, query, limit=8)
+                # Distribute results across the target keys
+                per_key = max(1, len(results) // len(target_keys))
+                for i, key in enumerate(target_keys):
+                    start = i * per_key
+                    end = start + per_key if i < len(target_keys) - 1 else len(results)
+                    contexts[key] = results[start:end]
             except Exception as e:
-                self.logger.warning(f"Failed to retrieve {key} context: {e}")
-                contexts[key] = []
+                self.logger.warning(f"Failed to retrieve {group_key} context: {e}")
 
         return contexts
 
@@ -208,7 +225,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         self,
         context: AgentContext,
         screenshot_analysis: ScreenshotAnalysisResult | None,
-        atlassian_analysis: Any | None,
         requirements_analysis: RequirementsGeneratorResult | None,
         user_flow_analysis: UserFlowResult | None,
         kb_contexts: dict[str, list[str]],
@@ -220,7 +236,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         # 1. Overview section (always included)
         sections.append(
             await self._generate_overview_section(
-                context, atlassian_analysis, kb_contexts, section_order
+                context, kb_contexts, section_order
             )
         )
         section_order += 1
@@ -238,16 +254,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 context, requirements_analysis, kb_contexts, sections, section_order
             )
 
-            # 7. Source Tables & Database Mappings section (from existing PRD docs)
-            if requirements_analysis.source_tables or requirements_analysis.database_mappings:
-                sections.append(
-                    await self._generate_source_tables_section(
-                        context, requirements_analysis, section_order
-                    )
-                )
-                section_order += 1
-
-            # 8. Validation Rules section
+            # Validation Rules section (not in _add_requirements_sections)
             if requirements_analysis.validation_rules:
                 sections.append(
                     await self._generate_validation_section(
@@ -256,16 +263,7 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 )
                 section_order += 1
 
-            # 8. Integration Requirements section (NEW)
-            if requirements_analysis.integration_requirements:
-                sections.append(
-                    await self._generate_integration_section(
-                        context, requirements_analysis, section_order
-                    )
-                )
-                section_order += 1
-
-            # 9. Migration Mapping & Guide section (NEW)
+            # Migration Mapping & Guide section (not in _add_requirements_sections)
             if requirements_analysis.data_requirements:
                 sections.append(
                     await self._generate_migration_mapping_section(
@@ -273,20 +271,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                     )
                 )
                 section_order += 1
-
-            # 10. Non-Functional Requirements
-            sections.append(
-                await self._generate_nfr_section(context, requirements_analysis, section_order)
-            )
-            section_order += 1
-
-            # 11. Business Rules section
-            sections.append(
-                await self._generate_business_rules_section(
-                    context, requirements_analysis, section_order
-                )
-            )
-            section_order += 1
 
         # 12. User Flows section (if available)
         if user_flow_analysis:
@@ -384,7 +368,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
         executive_summary: str,
         appendices: list[dict[str, str]],
         screenshot_analysis: ScreenshotAnalysisResult | None,
-        atlassian_analysis: Any | None,
         requirements_analysis: RequirementsGeneratorResult | None,
     ) -> PRDDocument:
         """Create the PRD document structure."""
@@ -403,7 +386,6 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
                 "prd_type": "migration",
                 "sources": {
                     "screenshots": screenshot_analysis is not None,
-                    "jira": atlassian_analysis is not None,
                     "code": requirements_analysis is not None,
                 },
                 "statistics": {
@@ -444,19 +426,10 @@ class PRDAggregatorAgent(BaseAgent[PRDAggregatorResult]):
     async def _generate_overview_section(
         self,
         context: AgentContext,
-        atlassian_analysis: Any | None,
         kb_contexts: dict[str, list[str]],
         order: int,
     ) -> PRDSection:
         """Generate the overview section with specific module details."""
-        jira_context = ""
-        if atlassian_analysis:
-            jira_context = f"""
-Based on Jira analysis:
-- Total issues: {atlassian_analysis.total_issues}
-- Summary: {atlassian_analysis.summary[:1000]}
-"""
-
         kb_context = self.format_context_for_prompt(
             kb_contexts.get("overview", []) + kb_contexts.get("existing_prd", []),
             max_contexts=5,
@@ -465,7 +438,7 @@ Based on Jira analysis:
         prompt = load_prompt(
             "prd_aggregator/overview_section",
             form_name=context.form_name,
-            jira_context=jira_context,
+            jira_context="",
             kb_context=kb_context,
         )
 

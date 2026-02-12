@@ -9,6 +9,7 @@ from src.core.prd.database_analysis_agent import DatabaseAnalysisAgent
 from src.core.prd.requirements_generator_agent import RequirementsGeneratorAgent
 from src.core.prd.screenshot_analysis_agent import ScreenshotAnalysisAgent
 from src.core.prd.user_flow_agent import UserFlowAgent
+from src.utils.activity_data import load_activity_data
 from src.utils.data_reconstruction import reconstruct_code_files, reconstruct_screenshots
 from src.utils.logging_config import get_logger
 from src.workflows.activities.common import to_dict
@@ -23,6 +24,10 @@ async def analyze_screenshots_activity(
 ) -> dict[str, Any]:
     """Analyze screenshots using the ScreenshotAnalysisAgent."""
     logger.info("Starting screenshot analysis", form_name=form_name)
+
+    # Hydrate full screenshot data from side-channel file
+    if screenshot_data and screenshot_data.get("_data_file"):
+        screenshot_data = load_activity_data(screenshot_data["_data_file"]) or screenshot_data
 
     agent = ScreenshotAnalysisAgent()
     context = AgentContext(form_name=form_name)

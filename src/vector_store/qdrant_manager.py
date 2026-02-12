@@ -375,3 +375,18 @@ class QdrantManager:
         collections = self.client.get_collections().collections
         prefix = self.settings.qdrant.collection_prefix
         return [c.name for c in collections if c.name.startswith(prefix)]
+
+
+# ---------------------------------------------------------------------------
+# Singleton accessor (like get_cache_manager)
+# ---------------------------------------------------------------------------
+
+_qdrant_manager: QdrantManager | None = None
+
+
+def get_qdrant_manager() -> QdrantManager:
+    """Get or create a global QdrantManager singleton."""
+    global _qdrant_manager
+    if _qdrant_manager is None:
+        _qdrant_manager = QdrantManager()
+    return _qdrant_manager

@@ -34,7 +34,6 @@ async def aggregate_prd_activity(
     result = await agent.analyze(
         context,
         screenshot_analysis=reconstruct_screenshot_analysis(screenshot_analysis, form_name),
-        atlassian_analysis=None,  # Jira analysis removed
         requirements_analysis=reconstruct_requirements_analysis(requirements_analysis, form_name),
         user_flow_analysis=reconstruct_user_flow_analysis(user_flow_analysis, form_name),
         database_analysis=database_analysis,

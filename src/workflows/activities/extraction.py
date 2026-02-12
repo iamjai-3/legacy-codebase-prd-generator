@@ -8,6 +8,7 @@ from temporalio import activity
 from src.extractors.code_extractor import CodeExtractor
 from src.extractors.minio_extractor import MinioExtractor
 from src.extractors.prd_extractor import PRDExtractor
+from src.utils.activity_data import save_activity_data
 from src.utils.logging_config import get_logger
 from src.workflows.activities.common import to_dict
 
@@ -204,7 +205,9 @@ async def extract_screenshots_activity(
     extractor = MinioExtractor()
     screenshots = extractor.get_form_screenshots(form_name=form_name, bucket=bucket, prefix=prefix)
 
-    return {
+    # Write heavy payload (raw image bytes) to a local file so only
+    # lightweight metadata travels through Temporal gRPC.
+    full_data = {
         "form_name": form_name,
         "screenshot_count": len(screenshots),
         "screenshots": [
@@ -217,6 +220,14 @@ async def extract_screenshots_activity(
             for s in screenshots
         ],
         "raw_screenshots": [to_dict(s) for s in screenshots],
+    }
+    data_file = save_activity_data(form_name, "screenshots", full_data)
+
+    return {
+        "form_name": form_name,
+        "screenshot_count": len(screenshots),
+        "screenshots": full_data["screenshots"],
+        "_data_file": str(data_file),
     }
 
 
@@ -286,7 +297,9 @@ async def extract_existing_prd_activity(
         f"{len(documents_data)} documents, {len(images_data)} images"
     )
 
-    return {
+    # Write heavy payload (documents + base64 images) to a local file
+    # so only lightweight metadata travels through Temporal gRPC.
+    full_data = {
         "form_name": form_name,
         "success": True,
         "prd_directory": existing_prd.prd_directory,
@@ -296,6 +309,17 @@ async def extract_existing_prd_activity(
         "images": images_data,
         "combined_content": existing_prd.combined_content,
         "total_words": sum(doc.word_count for doc in existing_prd.documents),
+    }
+    data_file = save_activity_data(form_name, "existing_prd", full_data)
+
+    return {
+        "form_name": form_name,
+        "success": True,
+        "prd_directory": existing_prd.prd_directory,
+        "document_count": len(documents_data),
+        "image_count": len(images_data),
+        "total_words": sum(doc.word_count for doc in existing_prd.documents),
+        "_data_file": str(data_file),
     }
 
 
@@ -370,12 +394,22 @@ async def extract_db_prd_activity(
 
         logger.info(f"Extracted DB_PRD for {form_name}: {len(documents_data)} documents")
 
-        return {
+        # Write heavy payload to local file to stay under Temporal gRPC limits
+        full_data = {
             "form_name": form_name,
             "success": True,
             "document_count": len(documents_data),
             "documents": documents_data,
             "total_words": sum(doc["word_count"] for doc in documents_data),
+        }
+        data_file = save_activity_data(form_name, "db_prd", full_data)
+
+        return {
+            "form_name": form_name,
+            "success": True,
+            "document_count": len(documents_data),
+            "total_words": sum(doc["word_count"] for doc in documents_data),
+            "_data_file": str(data_file),
         }
 
     except Exception as e:

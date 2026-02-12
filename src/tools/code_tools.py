@@ -9,7 +9,7 @@ import ast
 import re
 
 from src.utils.logging_config import get_logger
-from src.vector_store.qdrant_manager import QdrantManager
+from src.vector_store.qdrant_manager import get_qdrant_manager
 
 logger = get_logger(__name__)
 
@@ -284,7 +284,7 @@ def search_codebase(form_name: str, query: str, limit: int = 10) -> str:
         Formatted search results
     """
     try:
-        manager = QdrantManager()
+        manager = get_qdrant_manager()
         results = manager.search(
             form_name=form_name,
             query=query,
@@ -344,7 +344,7 @@ def get_code_context(
         Formatted context for use in prompts (each chunk capped to reduce token usage)
     """
     try:
-        manager = QdrantManager()
+        manager = get_qdrant_manager()
 
         filter_metadata = {}
         if doc_type:

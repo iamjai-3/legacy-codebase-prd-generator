@@ -11,7 +11,7 @@ from langchain_core.embeddings import Embeddings
 from langchain_openai import OpenAIEmbeddings
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from src.config.settings import EmbeddingProvider, get_settings
+from src.config.settings import get_settings
 from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -43,39 +43,25 @@ class EmbeddingService:
 
     def _create_embeddings(self) -> Embeddings:
         """
-        Create the appropriate embeddings instance based on configured provider.
+        Create the embeddings instance.
+
+        Currently only OpenAI is supported. Additional providers can be added
+        by branching on self.settings.llm.embedding_provider.
 
         Returns:
             Embeddings instance
         """
-        provider = self.settings.llm.embedding_provider
-
-        if provider == EmbeddingProvider.OPENAI:
-            embeddings = OpenAIEmbeddings(
-                model=self.settings.openai.embedding_model,
-                openai_api_key=self.settings.openai.api_key,
-                dimensions=self.settings.qdrant.vector_size,
-            )
-            logger.info(
-                "Initialized OpenAI embeddings",
-                provider="openai",
-                model=self.settings.openai.embedding_model,
-                dimensions=self.settings.qdrant.vector_size,
-            )
-        else:
-            # Default to OpenAI
-            embeddings = OpenAIEmbeddings(
-                model=self.settings.openai.embedding_model,
-                openai_api_key=self.settings.openai.api_key,
-                dimensions=self.settings.qdrant.vector_size,
-            )
-            logger.info(
-                "Initialized OpenAI embeddings (default fallback)",
-                provider="openai",
-                model=self.settings.openai.embedding_model,
-                dimensions=self.settings.qdrant.vector_size,
-            )
-
+        embeddings = OpenAIEmbeddings(
+            model=self.settings.openai.embedding_model,
+            openai_api_key=self.settings.openai.api_key,
+            dimensions=self.settings.qdrant.vector_size,
+        )
+        logger.info(
+            "Initialized OpenAI embeddings",
+            provider="openai",
+            model=self.settings.openai.embedding_model,
+            dimensions=self.settings.qdrant.vector_size,
+        )
         return embeddings
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))

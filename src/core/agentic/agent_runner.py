@@ -362,7 +362,9 @@ class AgentRunner:
                 self._tool_result_hash_by_key[cache_key] = cached_hash
                 return cached_text, cached_text.startswith("Error:")
 
-        result = self.agent.execute_tool(tool_use.name, tool_use.input)
+        result = await asyncio.to_thread(
+            self.agent.execute_tool, tool_use.name, tool_use.input
+        )
         is_error = result.startswith("Error:")
 
         if config.dedupe_tool_results and tool_use.name in IDEMPOTENT_TOOLS:

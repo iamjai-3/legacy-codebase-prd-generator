@@ -25,7 +25,7 @@ from src.utils.serialization import (
     from_dict_list,
     parse_list_response,
 )
-from src.vector_store.qdrant_manager import QdrantManager
+from src.vector_store.qdrant_manager import QdrantManager, get_qdrant_manager
 
 # Type variable for agent output
 T = TypeVar("T")
@@ -128,7 +128,7 @@ class BaseAgent(ABC, Generic[T]):
     def vector_store(self) -> QdrantManager:
         """Get or create the vector store manager."""
         if self._vector_store is None:
-            self._vector_store = QdrantManager()
+            self._vector_store = get_qdrant_manager()
         return self._vector_store
 
     @abstractmethod

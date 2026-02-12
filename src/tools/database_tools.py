@@ -6,7 +6,7 @@ using the existing knowledge base.
 """
 
 from src.utils.logging_config import get_logger
-from src.vector_store.qdrant_manager import QdrantManager
+from src.vector_store.qdrant_manager import get_qdrant_manager
 
 logger = get_logger(__name__)
 
@@ -25,7 +25,7 @@ def get_database_schema(form_name: str) -> str:
         Formatted database schema information
     """
     try:
-        manager = QdrantManager()
+        manager = get_qdrant_manager()
 
         # Search for database-related content
         results = manager.search(
@@ -77,7 +77,7 @@ def get_table_mappings(form_name: str, table_name: str | None = None) -> str:
         Formatted table mapping information
     """
     try:
-        manager = QdrantManager()
+        manager = get_qdrant_manager()
 
         query = f"table mapping relationship foreign key {table_name or ''}"
 
@@ -126,7 +126,7 @@ def get_entity_definition(form_name: str, entity_name: str) -> str:
         Entity definition and related code
     """
     try:
-        manager = QdrantManager()
+        manager = get_qdrant_manager()
 
         # Search for the specific entity
         results = manager.search(
@@ -168,7 +168,7 @@ def get_business_logic(form_name: str, topic: str) -> str:
         Relevant business logic code and documentation
     """
     try:
-        manager = QdrantManager()
+        manager = get_qdrant_manager()
 
         # Search for business logic
         results = manager.search(

@@ -12,6 +12,17 @@ from src.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# Module-level cache for DB PRD content (fetched from MinIO)
+_cached_db_prd: str | None = None
+
+
+def _get_cached_db_prd() -> str:
+    """Get DB PRD content, caching the result for the process lifetime."""
+    global _cached_db_prd
+    if _cached_db_prd is None:
+        _cached_db_prd = get_db_prd()
+    return _cached_db_prd
+
 
 def search_legacy_schema(table_name: str) -> str:
     """
@@ -24,7 +35,7 @@ def search_legacy_schema(table_name: str) -> str:
         Schema information for matching tables
     """
     try:
-        db_prd = get_db_prd()
+        db_prd = _get_cached_db_prd()
 
         if "Error" in db_prd:
             return f"Database PRD not available: {db_prd}"
@@ -72,7 +83,7 @@ def search_target_schema(table_name: str) -> str:
         Schema information for matching tables
     """
     try:
-        db_prd = get_db_prd()
+        db_prd = _get_cached_db_prd()
 
         if "Error" in db_prd:
             return f"Database PRD not available: {db_prd}"
@@ -115,7 +126,7 @@ def get_schema_comparison() -> str:
         Schema comparison summary with metrics
     """
     try:
-        db_prd = get_db_prd()
+        db_prd = _get_cached_db_prd()
 
         if "Error" in db_prd:
             return f"Database PRD not available: {db_prd}"
@@ -274,7 +285,7 @@ def get_highly_connected_tables() -> str:
         List of tables with high relationship counts
     """
     try:
-        db_prd = get_db_prd()
+        db_prd = _get_cached_db_prd()
         if "Error" in db_prd:
             return f"Database PRD not available: {db_prd}"
 

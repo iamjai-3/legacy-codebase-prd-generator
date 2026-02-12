@@ -16,16 +16,22 @@ logger = get_logger(__name__)
 
 CONTENT_SEPARATOR = "\n---\n"
 
+# Cached MinIO client singleton
+_minio_client: Minio | None = None
+
 
 def _get_minio_client() -> Minio:
-    """Get or create MinIO client."""
-    settings = get_settings()
-    return Minio(
-        settings.minio.endpoint,
-        access_key=settings.minio.access_key,
-        secret_key=settings.minio.secret_key,
-        secure=settings.minio.secure,
-    )
+    """Get or create a cached MinIO client singleton."""
+    global _minio_client
+    if _minio_client is None:
+        settings = get_settings()
+        _minio_client = Minio(
+            settings.minio.endpoint,
+            access_key=settings.minio.access_key,
+            secret_key=settings.minio.secret_key,
+            secure=settings.minio.secure,
+        )
+    return _minio_client
 
 
 def list_screenshots(form_name: str, bucket: str | None = None) -> str:

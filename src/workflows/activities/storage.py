@@ -7,6 +7,7 @@ from typing import Any
 from temporalio import activity
 
 from src.extractors.minio_extractor import MinioExtractor, Screenshot
+from src.utils.activity_data import load_activity_data
 from src.utils.data_reconstruction import _restore_image_data
 from src.utils.file_utils import ensure_directory, read_file_content, write_json
 from src.utils.logging_config import get_logger
@@ -49,6 +50,16 @@ async def store_vectors_activity(
     - DB_PRD documents (database schemas, table relationships, data mappings)
     """
     logger.info("Starting vector storage", form_name=form_name)
+
+    # Hydrate large payloads from side-channel files when available.
+    # Extraction activities write heavy data to local JSON files and return
+    # a lightweight dict with a ``_data_file`` key instead of inline content.
+    if screenshot_data and screenshot_data.get("_data_file"):
+        screenshot_data = load_activity_data(screenshot_data["_data_file"]) or screenshot_data
+    if existing_prd_data and existing_prd_data.get("_data_file"):
+        existing_prd_data = load_activity_data(existing_prd_data["_data_file"]) or existing_prd_data
+    if db_prd_data and db_prd_data.get("_data_file"):
+        db_prd_data = load_activity_data(db_prd_data["_data_file"]) or db_prd_data
 
     qdrant = QdrantManager()
     collection_name = qdrant.create_collection(form_name=form_name, recreate=recreate_collection)
